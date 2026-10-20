@@ -21,6 +21,7 @@ from .rms_norm import RMSNorm
 
 from .kernel.rotary import apply_rotary_emb
 from .model_parallel_init import vocab_init_method, init_method
+from . import layer_graphs
 
 
 @dataclass
@@ -146,7 +147,8 @@ class SelfDecoder(nn.Module):
         x,
         incremental_state=None,
         is_prefilling=False,
-        start_pos=0
+        start_pos=0,
+        graphed=None,
     ):
         if is_prefilling and x.size(1) % self.block_size != 0 and self.args.sliding_window is None:
             padding_len = self.block_size - x.size(1) % self.block_size
@@ -158,6 +160,10 @@ class SelfDecoder(nn.Module):
             index_mask = self.get_index_mask(x, x.size(1) - padding_len, x.size(1))
 
         rel_pos = self.build_rel_pos(x, start_pos)
+        if graphed is not None and padding_len == 0:
+            for call in graphed:
+                x = call(x, *rel_pos)
+            return x
         for idx, layer in enumerate(self.layers):
             if incremental_state is not None:
                 if idx not in incremental_state:
@@ -210,6 +216,7 @@ class CrossDecoder(nn.Module):
         incremental_state=None,
         start_pos=0,
         skip_cross_decoder=False,
+        graphed=None,
     ):
         bsz, seqlen, embed_dim = x.size()
         x_norm = self.kv_layer_norm(x)
@@ -229,6 +236,10 @@ class CrossDecoder(nn.Module):
         
         if skip_cross_decoder:
             return torch.zeros(bsz, 1, embed_dim, device=x.device, dtype=x.dtype)
+        if graphed is not None:
+            for call in graphed:
+                x = call(x, key, value, *rel_pos)
+            return x
         for layer in self.layers:
             x = layer(
                 x,
@@ -268,12 +279,14 @@ class YOCO(nn.Module):
         skip_cross_decoder=False
     ): 
         x = self.embed_scale * self.embed_tokens(x)
+        graphed = layer_graphs.prepare(self, x, incremental_state, start_pos, skip_cross_decoder)
 
         x = self.self_decoder(
             x,
             incremental_state=incremental_state,
             is_prefilling=is_prefilling,
             start_pos=start_pos,
+            graphed=graphed[0] if graphed else None,
         )
 
         x = self.cross_decoder(
@@ -281,6 +294,7 @@ class YOCO(nn.Module):
             start_pos=start_pos,
             incremental_state=incremental_state,
             skip_cross_decoder=skip_cross_decoder,
+            graphed=graphed[1] if graphed else None,
         )
             
         x = self.layer_norm(x)
