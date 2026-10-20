@@ -13,6 +13,8 @@ import torch
 import torch.nn as nn
 
 ENABLED = os.environ.get('YOCO_LAYER_GRAPHS', '0') == '1'
+# DDP keeps the gradients as views of its buckets (no bucket -> .grad copy after the all-reduce; same values)
+BUCKET_VIEW = os.environ.get('YOCO_DDP_BUCKET_VIEW', '0') == '1'
 
 
 class _SelfCall(nn.Module):
@@ -92,14 +94,31 @@ def _prebuild(module):
                 build(m, max(1, m.args.max_batch_size), seqlen)
 
 
-if ENABLED:
+# callables run on the module right before DDP wraps it (and before the layers are captured), e.g. zero1_fast's
+# placement of the bf16 parameters into its all-gather buffer
+PRE_DDP_HOOKS = []
+
+
+def install_ddp_patch():
     import fairseq.models.distributed_fairseq_model as _dfm
+    if getattr(_dfm.DistributedDataParallel, '_yoco_patched', False):
+        return
 
     class _GraphedDDP(_dfm.DistributedDataParallel):
-        """torch DDP that first captures the YOCO layers of the module it wraps (see build())."""
+        """torch DDP that first runs the pre-DDP hooks and captures the YOCO layers (see build())."""
+        _yoco_patched = True
 
         def __init__(self, module, *args, **kwargs):
-            _prebuild(module)
+            for hook in PRE_DDP_HOOKS:
+                hook(module)
+            if ENABLED:
+                _prebuild(module)
+            if BUCKET_VIEW:
+                kwargs['gradient_as_bucket_view'] = True
             super().__init__(module, *args, **kwargs)
 
     _dfm.DistributedDataParallel = _GraphedDDP
+
+
+if ENABLED or BUCKET_VIEW:
+    install_ddp_patch()

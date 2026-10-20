@@ -21,10 +21,41 @@ from fairseq import utils
 from fairseq.optim import fp16_optimizer as _f16
 
 ENABLED = os.environ.get('YOCO_ZERO1_FAST', '0') == '1'
+# one in-place all_gather_into_tensor over equal-size (padded) per-owner segments instead of one broadcast per owner
+ALLGATHER = os.environ.get('YOCO_ZERO1_ALLGATHER', '0') == '1'
+# the bf16 model parameters live in the all-gather buffer itself (placed before DDP and the layer graphs)
+PARAM_VIEWS = ALLGATHER and os.environ.get('YOCO_ZERO1_PARAM_VIEWS', '0') == '1'
+_PLACED = {}
 
 _orig_clip = _f16._FP16OptimizerMixin.clip_grad_norm
 _orig_step = _f16._FP16OptimizerMixin.step
 _orig_zero = _f16._FP16OptimizerMixin.zero_grad
+
+
+def _place_params(module):
+    """Replicate fairscale OSS's greedy partition (params in order, each to the rank with the smallest total so far)
+    and make every trainable bf16 parameter a view of its owner's segment of one flat buffer."""
+    if not dist.is_initialized():
+        return
+    params = [p for p in module.parameters() if p.requires_grad]
+    if not params or any(not p.is_cuda for p in params):
+        return
+    world = dist.get_world_size()
+    sizes, owner = [0] * world, []
+    for p in params:
+        r = sizes.index(min(sizes))
+        owner.append(r)
+        sizes[r] += p.numel()
+    seg = max(sizes)
+    flat = torch.empty(world * seg, dtype=params[0].dtype, device=params[0].device)
+    offs = [r * seg for r in range(world)]
+    with torch.no_grad():
+        for p, r in zip(params, owner):
+            v = flat[offs[r]:offs[r] + p.numel()].view_as(p)
+            v.copy_(p.data)
+            p.data = v
+            offs[r] += p.numel()
+    _PLACED.update(flat=flat, seg=seg, owner={id(p): r for p, r in zip(params, owner)})
 
 
 def _oss(self):
@@ -50,18 +81,30 @@ def _setup(self):
     pairs = [(p16, p32) for p16, p32 in zip(p16s, p32s) if p16.requires_grad]
     local = [(p16, p32) for p16, p32 in pairs if owner[p32] == rank]
     # one flat bf16 buffer per owner rank, params in model order; non-owners receive into it
+    per = [[(p16, p32) for p16, p32 in pairs if owner[p32] == r] for r in range(world)]
+    seg = max(sum(p16.numel() for p16, _ in mine) for mine in per)
+    placed = bool(_PLACED) and all(_PLACED['owner'].get(id(p16)) == owner[p32] for p16, p32 in pairs)
+    if PARAM_VIEWS and not placed:
+        raise RuntimeError('zero1_fast: the placed parameter layout does not match the OSS partition')
+    if placed:
+        flat, seg = _PLACED['flat'], _PLACED['seg']
+    else:
+        flat = torch.empty(world * seg, dtype=p16s[0].dtype, device=p16s[0].device) if ALLGATHER else None
     buckets = []
-    for r in range(world):
-        mine = [(p16, p32) for p16, p32 in pairs if owner[p32] == r]
+    for r, mine in enumerate(per):
         n = sum(p16.numel() for p16, _ in mine)
-        buf = torch.empty(n, dtype=p16s[0].dtype, device=p16s[0].device)
+        buf = flat[r * seg:r * seg + n] if ALLGATHER else torch.empty(n, dtype=p16s[0].dtype, device=p16s[0].device)
         views, off = [], 0
         for p16, p32 in mine:
-            views.append((p16, p32, buf[off:off + p16.numel()].view_as(p16)))
+            v = buf[off:off + p16.numel()].view_as(p16)
+            if placed and v.data_ptr() != p16.data_ptr():
+                raise RuntimeError('zero1_fast: a placed parameter is not at its slot')
+            views.append((p16, p32, v))
             off += p16.numel()
         buckets.append((r, buf, views))
     oss._broadcast_params = lambda: None          # the fp32 broadcast is replaced by the bf16 one below
-    st = {'local': local, 'buckets': buckets, 'rank': rank, 'group': group, 'global_ranks': oss._local_to_global_rank}
+    st = {'local': local, 'buckets': buckets, 'rank': rank, 'group': group, 'global_ranks': oss._local_to_global_rank,
+          'flat': flat, 'seg': seg, 'placed': placed}
     self._z1 = st
     return st
 
@@ -103,13 +146,18 @@ def step(self, closure=None, groups=None):
         if r == rank:
             for p16, p32, v in views:
                 v.copy_(p32.data)
-    handles = [dist.broadcast(buf, src=st['global_ranks'][r], group=st['group'], async_op=True)
-               for r, buf, views in st['buckets'] if buf.numel()]
-    for h in handles:
-        h.wait()
-    for r, buf, views in st['buckets']:
-        for p16, p32, v in views:
-            p16.data.copy_(v)
+    if st['flat'] is not None:
+        flat, seg = st['flat'], st['seg']
+        dist.all_gather_into_tensor(flat, flat[rank * seg:(rank + 1) * seg], group=st['group'])
+    else:
+        handles = [dist.broadcast(buf, src=st['global_ranks'][r], group=st['group'], async_op=True)
+                   for r, buf, views in st['buckets'] if buf.numel()]
+        for h in handles:
+            h.wait()
+    if not st['placed']:
+        for r, buf, views in st['buckets']:
+            for p16, p32, v in views:
+                p16.data.copy_(v)
 
 
 def zero_grad(self):
@@ -120,6 +168,11 @@ def zero_grad(self):
         p.grad = None
     self._needs_sync = False
 
+
+if ENABLED and PARAM_VIEWS:
+    from models.decoder import layer_graphs as _lg
+    _lg.PRE_DDP_HOOKS.append(_place_params)
+    _lg.install_ddp_patch()
 
 if ENABLED:
     _f16._FP16OptimizerMixin.clip_grad_norm = clip_grad_norm
