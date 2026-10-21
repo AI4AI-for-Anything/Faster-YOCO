@@ -15,6 +15,10 @@ import torch.nn as nn
 ENABLED = os.environ.get('YOCO_LAYER_GRAPHS', '0') == '1'
 # DDP keeps the gradients as views of its buckets (no bucket -> .grad copy after the all-reduce; same values)
 BUCKET_VIEW = os.environ.get('YOCO_DDP_BUCKET_VIEW', '0') == '1'
+# gradient averaging per parameter: an async NCCL all-reduce (AVG) on each .grad as soon as it is accumulated,
+# waited for in all_reduce_grads() (called by fairseq's trainer before clipping); replaces DDP's bucketed reducer
+# and its copy-and-scale of every gradient into the buckets
+PARAM_ALLREDUCE = os.environ.get('YOCO_PARAM_ALLREDUCE', '0') == '1'
 
 
 class _SelfCall(nn.Module):
@@ -116,9 +120,30 @@ def install_ddp_patch():
             if BUCKET_VIEW:
                 kwargs['gradient_as_bucket_view'] = True
             super().__init__(module, *args, **kwargs)
+            self._yoco_works = None
+            if PARAM_ALLREDUCE:
+                import torch.distributed as dist
+                self._yoco_dist = dist
+                self.require_backward_grad_sync = False      # DDP's reducer stays idle
+                self._yoco_works = []
+                for p in self.module.parameters():
+                    if p.requires_grad:
+                        p.register_post_accumulate_grad_hook(self._yoco_grad_ready)
+
+        def _yoco_grad_ready(self, p):
+            dist = self._yoco_dist
+            self._yoco_works.append(dist.all_reduce(p.grad, op=dist.ReduceOp.AVG, group=self.process_group,
+                                                    async_op=True))
+
+        def all_reduce_grads(self):
+            if self._yoco_works is None:
+                return
+            for w in self._yoco_works:
+                w.wait()
+            self._yoco_works = []
 
     _dfm.DistributedDataParallel = _GraphedDDP
 
 
-if ENABLED or BUCKET_VIEW:
+if ENABLED or BUCKET_VIEW or PARAM_ALLREDUCE:
     install_ddp_patch()
