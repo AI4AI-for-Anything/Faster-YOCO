@@ -278,7 +278,7 @@ class YOCO(nn.Module):
         is_prefilling=True,
         skip_cross_decoder=False
     ): 
-        x = self.embed_scale * self.embed_tokens(x)
+        x = self.embed_scale * layer_graphs.embed(self.embed_tokens, x)
         graphed = layer_graphs.prepare(self, x, incremental_state, start_pos, skip_cross_decoder)
 
         x = self.self_decoder(

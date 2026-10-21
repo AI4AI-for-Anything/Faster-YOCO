@@ -22,6 +22,18 @@ PARAM_ALLREDUCE = os.environ.get('YOCO_PARAM_ALLREDUCE', '0') == '1'
 # with PARAM_ALLREDUCE: reduce (AVG) each gradient only to the rank owning its optimizer state (ZeRO-2 style;
 # needs zero1_fast's parameter placement for the owner map; the clip norm is then summed across owners)
 REDUCE_OWNER = PARAM_ALLREDUCE and os.environ.get('YOCO_GRAD_REDUCE_OWNER', '0') == '1'
+# with REDUCE_OWNER: the token-embedding gradient is formed on its owner only. The embedding is untied and its
+# gradient is zero except in the rows of this update's tokens, so instead of reducing the dense table gradient
+# (vocab x dim, the last and largest reduction of the backward) every rank all-gathers its token ids and the
+# gradient rows of the embedding output (on its own communicator, so it does not queue behind the per-parameter
+# reductions), and the owner runs the same embedding_dense_backward on all ranks' rows at once (fp32 accumulation per
+# row, padding row excluded as F.embedding does) and averages (x 1/world, as the AVG reduction does). Other ranks
+# leave the embedding .grad unset (with REDUCE_OWNER a non-owner's gradient is never used).
+OWNER_EMBED = REDUCE_OWNER and os.environ.get('YOCO_OWNER_EMBED_GRAD', '0') == '1'
+# diagnostic only (profiling the backward without communication overlap): YOCO_DIAG_DEFER_REDUCE=1 launches the
+# per-parameter reductions only in all_reduce_grads(), after the backward
+DIAG_DEFER = PARAM_ALLREDUCE and os.environ.get('YOCO_DIAG_DEFER_REDUCE', '0') == '1'
+_EMBED = {}
 
 
 class _SelfCall(nn.Module):
@@ -46,6 +58,43 @@ class Graphs:
     @staticmethod
     def signature(*ts):
         return tuple((tuple(t.shape), t.dtype, t.device, t.requires_grad) for t in ts)
+
+
+class _OwnerEmbedding(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, tokens, weight, padding_idx):
+        ctx.save_for_backward(tokens)
+        ctx.num_weights, ctx.padding_idx = weight.shape[0], padding_idx
+        return torch.embedding(weight, tokens, padding_idx, False, False)
+
+    @staticmethod
+    def backward(ctx, grad):
+        import torch.distributed as dist
+        (tokens,) = ctx.saved_tensors
+        group, owner = _EMBED['group'], _EMBED['owner']
+        world, rank = dist.get_world_size(group), dist.get_rank(group)
+        idx = tokens.reshape(-1).contiguous()
+        g = grad.reshape(-1, grad.shape[-1]).contiguous()
+        idx_all = idx.new_empty(world * idx.numel())
+        g_all = g.new_empty(world * g.shape[0], g.shape[1])
+        dist.all_gather_into_tensor(idx_all, idx, group=group)
+        dist.all_gather_into_tensor(g_all, g, group=group)
+        if rank != owner:
+            return None, None, None
+        dw = torch.ops.aten.embedding_dense_backward(g_all, idx_all, ctx.num_weights, ctx.padding_idx, False)
+        return None, dw.mul_(1.0 / world), None
+
+
+def embed(module, tokens):
+    """module(tokens) for fairscale's VocabParallelEmbedding at model-parallel size 1 (YOCO_OWNER_EMBED_GRAD)."""
+    w = module.weight
+    if (not OWNER_EMBED or _EMBED.get('weight') is not w or not module.training or not torch.is_grad_enabled()
+            or module.max_norm is not None or module.scale_grad_by_freq or module.sparse
+            or module.vocab_start_index != 0 or module.vocab_end_index != w.shape[0]):
+        return module(tokens)
+    pad = module.padding_idx
+    pad = -1 if pad is None else (pad + w.shape[0] if pad < 0 else pad)      # F.embedding's normalization
+    return _OwnerEmbedding.apply(tokens, w, pad)
 
 
 def usable(module, incremental_state, x):
@@ -129,12 +178,26 @@ def install_ddp_patch():
                 self._yoco_dist = dist
                 self.require_backward_grad_sync = False      # DDP's reducer stays idle
                 self._yoco_works = []
+                self._yoco_deferred = []
                 for p in self.module.parameters():
                     if p.requires_grad:
                         p.register_post_accumulate_grad_hook(self._yoco_grad_ready)
+                if OWNER_EMBED:
+                    from .yoco import YOCO
+                    tops = [m for m in self.module.modules() if isinstance(m, YOCO)]
+                    if len(tops) == 1:
+                        w = tops[0].embed_tokens.weight
+                        _EMBED.update(weight=w, owner=self._yoco_owner()[id(w)],
+                                      group=dist.new_group(ranks=dist.get_process_group_ranks(self.process_group),
+                                                           backend='nccl'))
 
-        def _yoco_grad_ready(self, p):
+        def _yoco_grad_ready(self, p, deferred=False):
             dist = self._yoco_dist
+            if p is _EMBED.get('weight'):
+                return                                   # already formed on its owner (_OwnerEmbedding)
+            if DIAG_DEFER and not deferred:
+                self._yoco_deferred.append(p)
+                return
             if REDUCE_OWNER:
                 owner = self._yoco_owner()[id(p)]
                 self._yoco_works.append(dist.reduce(p.grad, dst=dist.get_global_rank(self.process_group, owner)
@@ -153,6 +216,10 @@ def install_ddp_patch():
         def all_reduce_grads(self):
             if self._yoco_works is None:
                 return
+            if DIAG_DEFER:
+                deferred, self._yoco_deferred = self._yoco_deferred, []
+                for p in deferred:
+                    self._yoco_grad_ready(p, deferred=True)
             for w in self._yoco_works:
                 w.wait()
             self._yoco_works = []
