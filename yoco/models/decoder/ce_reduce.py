@@ -57,12 +57,12 @@ def _check(err, what):
 
 
 @triton.jit
-def _sum_slots(S, OUT, G, R, scale, WORLD: tl.constexpr, BLOCK: tl.constexpr):
-    # OUT holds this rank's own gradients, S the WORLD-1 peer slots (peer s < R in slot s, s > R in slot s-1);
-    # summed in fp32 in rank order 0..WORLD-1, scaled, rounded once, written back to OUT
+def _sum_slots(S, OUT, G, BASE, END, R, scale, WORLD: tl.constexpr, BLOCK: tl.constexpr):
+    # OUT holds this rank's own gradients, S the WORLD-1 peer slots of G elements each (peer s < R in slot s, s > R in
+    # slot s-1); elements [BASE, END) are summed in fp32 in rank order 0..WORLD-1, scaled, rounded once, written to OUT
     G64 = G.to(tl.int64)                 # (WORLD-1) * G exceeds 2^31 elements: 64-bit slot offsets
-    offs = tl.program_id(0).to(tl.int64) * BLOCK + tl.arange(0, BLOCK)
-    mask = offs < G64
+    offs = BASE.to(tl.int64) + tl.program_id(0).to(tl.int64) * BLOCK + tl.arange(0, BLOCK)
+    mask = offs < END
     acc = tl.zeros([BLOCK], dtype=tl.float32)
     for k in tl.static_range(WORLD):
         if k < R:
@@ -107,23 +107,40 @@ def memcpy_async(dst, src, nbytes, stream):
 class CEReduce:
     """Per-DDP-module state. params: the trainable parameters reduced this way (model order); owner: id -> rank."""
 
-    def __init__(self, params, owner, group):
+    def __init__(self, params, owner, group, phase_of=None):
+        """phase_of: id(p) -> phase (0 = earliest in the backward). The gradients of a phase occupy one contiguous
+        range of every owner's G; once all gradients of phases 0..k are pushed, phase k gets its own barrier and is
+        summed on a side stream while the backward goes on (the last phase is summed in finish())."""
         self.group = group
         self.world = dist.get_world_size(group)
         self.rank = dist.get_rank(group)
         dev = params[0].device
         dtype = params[0].dtype
         self.dtype, self.esize = dtype, params[0].element_size()
+        phase_of = phase_of or {}
+        self.nphase = 1 + max([phase_of.get(id(p), 0) for p in params])
+        order = sorted(range(len(params)), key=lambda i: (phase_of.get(id(params[i]), 0), i))
         sizes = [0] * self.world
-        self.where = {}                                    # id(p) -> (owner, element offset in the owner's G)
-        for p in params:
-            r = owner[id(p)]
-            self.where[id(p)] = (r, sizes[r])
+        self.where = {}                                    # id(p) -> (owner, element offset in the owner's G, phase)
+        self.bounds = [[0, 0] for _ in range(self.nphase)]  # this rank's [start, end) of each phase in its G
+        self.need = [0] * self.nphase
+        for i in order:
+            p = params[i]
+            r, ph = owner[id(p)], phase_of.get(id(p), 0)
+            self.where[id(p)] = (r, sizes[r], ph)
+            if r == self.rank:
+                if self.bounds[ph][1] == 0:
+                    self.bounds[ph] = [sizes[r], sizes[r]]
+                self.bounds[ph][1] = sizes[r] + p.numel()
             sizes[r] += p.numel()
+            self.need[ph] += 1
         self.sizes = sizes
         G = sizes[self.rank]
         self.G = G
-        self.mine = [p for p in params if owner[id(p)] == self.rank]
+        self.mine = [params[i] for i in order if owner[id(params[i])] == self.rank]
+        self.done = [0] * self.nphase
+        self.next_phase = 0
+        self.sum_stream = torch.cuda.Stream(device=dev)
         self.staging = torch.empty((self.world - 1) * max(G, 1), dtype=dtype, device=dev)
         self.out = torch.empty(max(G, 1), dtype=dtype, device=dev)
         self.base = peer_pointers(self.staging, group)
@@ -158,8 +175,19 @@ class CEReduce:
         g.record_stream(self.stream)
         e['pushed'] = True
 
+    def _sum(self, ph):
+        a, b = self.bounds[ph]
+        if b > a:
+            BLOCK = 2048
+            _sum_slots[(triton.cdiv(b - a, BLOCK),)](self.staging, self.out, self.G, a, b, self.rank, 1.0 / self.world,
+                                                      WORLD=self.world, BLOCK=BLOCK, num_warps=8)
+
+    def _barrier(self):
+        with torch.cuda.stream(self.stream):
+            return dist.all_reduce(self.flag, group=self.group, async_op=True)
+
     def push(self, p):
-        r, off = self.where[id(p)]
+        r, off, ph = self.where[id(p)]
         g = p.grad
         if not g.is_contiguous():
             raise RuntimeError('ce_reduce: non-contiguous gradient')
@@ -174,18 +202,25 @@ class CEReduce:
         g.record_stream(self.stream)
         p.grad = None          # copied (the allocator keeps the block until the copy stream is past the copy)
         self.pushed += 1
+        self.done[ph] += 1
+        while self.next_phase < self.nphase - 1 and all(self.done[k] == self.need[k] for k in range(self.next_phase + 1)):
+            work = self._barrier()
+            with torch.cuda.stream(self.sum_stream):
+                work.wait()
+                self._sum(self.next_phase)
+            self.next_phase += 1
 
     def finish(self):
         """After the backward: barrier on the copy streams, sum the owner's slots, point .grad at the result."""
-        if self.pushed != len(self.where):
+        if self.pushed != len(self.where) or self.next_phase != self.nphase - 1:
             raise RuntimeError(f'ce_reduce: {self.pushed} of {len(self.where)} gradients were produced this update')
         self.pushed = 0
+        self.done = [0] * self.nphase
+        self.next_phase = 0
         e = self.emb
         if e is not None and not e['pushed']:
             raise RuntimeError('ce_reduce: no embedding gradient this update')
-        with torch.cuda.stream(self.stream):
-            work = dist.all_reduce(self.flag, group=self.group, async_op=True)
-        work.wait()
+        self._barrier().wait()
         if e is not None:
             e['pushed'] = False
             if e['owner'] == self.rank:
@@ -194,11 +229,8 @@ class CEReduce:
                 w = e['weight']
                 e['weight'].grad = torch.ops.aten.embedding_dense_backward(g_all, e['ids'].view(-1), w.shape[0],
                                                                           e['pad'], False)
-        G = self.G
-        if G:
-            BLOCK = 2048
-            _sum_slots[(triton.cdiv(G, BLOCK),)](self.staging, self.out, G, self.rank, 1.0 / self.world,
-                                                  WORLD=self.world, BLOCK=BLOCK, num_warps=8)
+        self._sum(self.nphase - 1)
+        torch.cuda.current_stream().wait_stream(self.sum_stream)
         off = 0
         for p in self.mine:
             p.grad = self.out[off:off + p.numel()].view_as(p)

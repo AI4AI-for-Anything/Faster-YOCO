@@ -37,6 +37,11 @@ ONE_PASS = os.environ.get('YOCO_Z1_ONE_PASS', '0') == '1'
 # rewritten only by its next cast, which follows that peer's next backward, which needs this rank's next forward
 # (gradient reduction), which waits for these copies.
 CE_ALLGATHER = PARAM_VIEWS and os.environ.get('YOCO_CE_ALLGATHER', '0') == '1'
+# the shard's Adam step writes the bf16 copy of each updated master itself (tasks/fused_adam_cast.py), so the cast
+# pass after the step is not needed
+FUSED_ADAM = os.environ.get('YOCO_FUSED_ADAM', '0') == '1'
+# with ONE_PASS: the fp32 master gradient g32 = float(g16) * factor in a vectorized Triton kernel (same products)
+SCALE_KERNEL = ONE_PASS and os.environ.get('YOCO_Z1_SCALE_KERNEL', '0') == '1'
 _PLACED = {}
 
 _orig_clip = _f16._FP16OptimizerMixin.clip_grad_norm
@@ -117,6 +122,11 @@ def _setup(self):
     oss._broadcast_params = lambda: None          # the fp32 broadcast is replaced by the bf16 one below
     st = {'local': local, 'buckets': buckets, 'rank': rank, 'group': group, 'global_ranks': oss._local_to_global_rank,
           'flat': flat, 'seg': seg, 'placed': placed}
+    if FUSED_ADAM and hasattr(oss.optim, 'multi_tensor_adam'):
+        from tasks.fused_adam_cast import FusedAdamCast
+        mine = [b for b in buckets if b[0] == rank]
+        dest = {p32.data_ptr(): v for _, _, views in mine for _, p32, v in views if v.is_contiguous()}
+        st['fused_adam'] = oss.optim.multi_tensor_adam = FusedAdamCast(dest)
     if CE_ALLGATHER and placed:
         from models.decoder.ce_reduce import peer_pointers
         st['ce'] = {'peer_flat': peer_pointers(flat, group), 'streams': [torch.cuda.Stream() for _ in range(world - 1)],
@@ -166,8 +176,16 @@ def step(self, closure=None, groups=None):
         dev = g32[0].device
         f1 = (factor.to(device=dev, dtype=torch.float32) if torch.is_tensor(factor)
               else torch.tensor(float(factor), dtype=torch.float32, device=dev)).reshape(1)
-        for (p16, _), g in zip(st['local'], g32):
-            torch.mul(p16.grad, f1, out=g)
+        if SCALE_KERNEL:
+            from tasks.fused_adam_cast import scale_up
+            for (p16, _), g in zip(st['local'], g32):
+                if p16.grad.is_contiguous() and g.is_contiguous() and p16.grad.dtype == torch.bfloat16:
+                    scale_up(p16.grad, g, f1)
+                else:
+                    torch.mul(p16.grad, f1, out=g)
+        else:
+            for (p16, _), g in zip(st['local'], g32):
+                torch.mul(p16.grad, f1, out=g)
     else:
         torch._foreach_copy_(g32, [p16.grad for p16, _ in st['local']])  # the same per-element copies and multiplies
         if torch.is_tensor(factor) or factor != 1.0:
@@ -176,8 +194,14 @@ def step(self, closure=None, groups=None):
     self._needs_sync = False
     self.fp32_optimizer.step(closure, groups=groups)          # the Adam step on this rank's shard (OSS)
     rank = st['rank']
+    fused = st.get('fused_adam')
     for r, buf, views in st['buckets']:
-        if r == rank:
+        if r == rank and fused is not None:
+            rest = [(p16, p32, v) for p16, p32, v in views if p32.data_ptr() not in fused.cast]
+            if rest:
+                torch._foreach_copy_([v for _, _, v in rest], [p32.data for _, p32, _ in rest])
+            fused.cast.clear()
+        elif r == rank:
             if ONE_PASS and views:
                 torch._foreach_copy_([v for _, _, v in views], [p32.data for _, p32, _ in views])
             else:

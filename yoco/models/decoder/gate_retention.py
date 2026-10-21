@@ -18,6 +18,11 @@ import os
 # switch YOCO_SUBLN_FUSED=1: the weightless per-head subln and the head -> token transpose after it in one Triton
 # kernel each way (rms_triton.rms_norm_heads; same arithmetic as the Triton RMSNorm)
 _SUBLN_FUSED = os.environ.get('YOCO_SUBLN_FUSED', '0') == '1'
+# switch YOCO_FUSE_QKVG=1: the q/k/v/g projections of the training forward as one GEMM against the four weights
+# concatenated (copied each forward); forward outputs are column blocks of it, the backward computes one input
+# gradient GEMM (fp32 accumulation over the four instead of three bf16 adds) and one weight-gradient GEMM whose
+# row blocks are the four weight gradients
+_FUSE_QKVG = os.environ.get('YOCO_FUSE_QKVG', '0') == '1'
 
 class GateRetention(nn.Module):
 
@@ -53,10 +58,17 @@ class GateRetention(nn.Module):
     ):
         bsz, tgt_len, _ = x.size()
 
-        q = self.q_proj(x)
-        k = self.k_proj(x)
-        v = self.v_proj(x)
-        g = self.g_proj(x)
+        if (_FUSE_QKVG and self.training and torch.is_grad_enabled() and incremental_state is None and x.is_cuda
+                and self.args.model_parallel_size == 1
+                and all(m.bias is None for m in (self.q_proj, self.k_proj, self.v_proj, self.g_proj))):
+            w = torch.cat([self.q_proj.weight, self.k_proj.weight, self.v_proj.weight, self.g_proj.weight], 0)
+            q, k, v, g = F.linear(x, w).split([self.q_proj.weight.shape[0], self.k_proj.weight.shape[0],
+                                               self.v_proj.weight.shape[0], self.g_proj.weight.shape[0]], dim=-1)
+        else:
+            q = self.q_proj(x)
+            k = self.k_proj(x)
+            v = self.v_proj(x)
+            g = self.g_proj(x)
         gt = self.gt_proj(x)
 
         qr = q.view(bsz, tgt_len, self.num_heads, self.head_dim)

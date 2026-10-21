@@ -1,3 +1,4 @@
+import os
 import math
 from dataclasses import dataclass
 from typing import Optional
@@ -22,6 +23,11 @@ from .rms_norm import RMSNorm
 from .kernel.rotary import apply_rotary_emb
 from .model_parallel_init import vocab_init_method, init_method
 from . import layer_graphs
+
+
+# switch YOCO_FUSE_ADDNORM=1 (with YOCO_TRITON_NORM): DecoderLayer's mid residual add and final_layer_norm in one
+# Triton kernel each way (rms_triton.add_rms_norm)
+_FUSE_ADDNORM = os.environ.get('YOCO_FUSE_ADDNORM', '0') == '1' and os.environ.get('YOCO_TRITON_NORM', '0') == '1'
 
 
 @dataclass
@@ -103,9 +109,15 @@ class DecoderLayer(nn.Module):
                 incremental_state=incremental_state,
                 is_prefilling=is_prefilling,)
 
-        x = x + residual
-        residual = x
-        x = self.final_layer_norm(x)
+        n = self.final_layer_norm
+        if (_FUSE_ADDNORM and self.training and x.is_cuda and x.dtype == torch.bfloat16 and n.weight is not None
+                and residual.dtype == x.dtype and residual.shape == x.shape):
+            from .rms_triton import add_rms_norm
+            residual, x = add_rms_norm(x, residual, n.weight, n.eps)
+        else:
+            x = x + residual
+            residual = x
+            x = self.final_layer_norm(x)
 
         x = self.ffn(x)
 

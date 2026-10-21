@@ -9,6 +9,12 @@ import torch
 import triton
 import triton.language as tl
 
+import os
+
+# backward programs per SM (YOCO_NORM_BWD_PPS, default 4): each writes one fp32 partial weight-gradient row, summed
+# afterwards; fewer programs = a smaller partial matrix to sum
+_BWD_PROGS_PER_SM = int(os.environ.get('YOCO_NORM_BWD_PPS', '4'))
+
 
 @triton.jit
 def _fwd(X, W, Y, RSTD, N, eps, stride, HAS_W: tl.constexpr, BLOCK: tl.constexpr):
@@ -87,7 +93,7 @@ class _RMSNorm(torch.autograd.Function):
             dy2 = dy2.contiguous()
         dx = torch.empty_like(x2)
         BLOCK = triton.next_power_of_2(N)
-        progs = min(M, 4 * torch.cuda.get_device_properties(x2.device).multi_processor_count)
+        progs = min(M, _BWD_PROGS_PER_SM * torch.cuda.get_device_properties(x2.device).multi_processor_count)
         rows = (M + progs - 1) // progs
         progs = (M + rows - 1) // rows
         dwp = torch.empty(progs, N, dtype=torch.float32, device=x2.device) if ctx.has_w else dx
@@ -171,3 +177,105 @@ class _RMSNormHeads(torch.autograd.Function):
 def rms_norm_heads(x, eps):
     """subln(x).transpose(1, 2).reshape(B, L, H * D) for a weightless RMSNorm, x: (B, H, L, D)."""
     return _RMSNormHeads.apply(x, eps)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Residual add fused with the RMSNorm that follows it (DecoderLayer: h = mixer(x) + residual; n = final_layer_norm(h)):
+#   forward  h = bf16(a + b), n = rms_norm(h, w) -- one pass instead of the add kernel and the norm kernel;
+#   backward dh = bf16(dh_residual + bf16(norm_backward(dn))) -- the norm's input gradient rounded to bf16 as before and
+#            the residual-path gradient added in the same kernel (eager: separate norm backward and add kernels).
+@triton.jit
+def _fwd_add(A, B, W, H, Y, RSTD, N, eps, stride, BLOCK: tl.constexpr):
+    row = tl.program_id(0)
+    cols = tl.arange(0, BLOCK)
+    mask = cols < N
+    a = tl.load(A + row * stride + cols, mask=mask, other=0.0).to(tl.float32)
+    b = tl.load(B + row * stride + cols, mask=mask, other=0.0).to(tl.float32)
+    h = (a + b).to(H.dtype.element_ty)
+    tl.store(H + row * stride + cols, h, mask=mask)
+    x = h.to(tl.float32)
+    ms = tl.sum(x * x, axis=0) / N
+    r = 1.0 / tl.sqrt(ms + eps)
+    n = (x * r).to(Y.dtype.element_ty)
+    w = tl.load(W + cols, mask=mask, other=0.0)
+    y = (n.to(tl.float32) * w.to(tl.float32)).to(Y.dtype.element_ty)
+    tl.store(Y + row * stride + cols, y, mask=mask)
+    tl.store(RSTD + row, r)
+
+
+@triton.jit
+def _bwd_add(DY, DH, X, W, RSTD, DX, DWP, M, N, stride, rows_per_prog, HAS_DH: tl.constexpr, BLOCK: tl.constexpr):
+    pid = tl.program_id(0)
+    cols = tl.arange(0, BLOCK)
+    mask = cols < N
+    w = tl.load(W + cols, mask=mask, other=0.0).to(tl.float32)
+    dw = tl.zeros([BLOCK], dtype=tl.float32)
+    start = pid * rows_per_prog
+    for i in range(0, rows_per_prog):
+        row = start + i
+        if row < M:
+            x = tl.load(X + row * stride + cols, mask=mask, other=0.0).to(tl.float32)
+            dy = tl.load(DY + row * stride + cols, mask=mask, other=0.0).to(tl.float32)
+            r = tl.load(RSTD + row)
+            nf = x * r
+            nb = nf.to(DX.dtype.element_ty).to(tl.float32)
+            dw += dy * nb
+            dn = (dy * w).to(DX.dtype.element_ty).to(tl.float32)
+            c = tl.sum(dn * nf, axis=0) / N
+            dx = (r * (dn - nf * c)).to(DX.dtype.element_ty)
+            if HAS_DH:
+                dh = tl.load(DH + row * stride + cols, mask=mask, other=0.0).to(tl.float32)
+                dx = (dx.to(tl.float32) + dh).to(DX.dtype.element_ty)
+            tl.store(DX + row * stride + cols, dx, mask=mask)
+    tl.store(DWP + pid * N + cols, dw, mask=mask)
+
+
+class _AddRMSNorm(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, a, b, weight, eps):
+        shape = a.shape
+        a2, b2 = a.reshape(-1, shape[-1]), b.reshape(-1, shape[-1])
+        if a2.stride(-1) != 1 or a2.stride(0) != a2.shape[1]:
+            a2 = a2.contiguous()
+        if b2.stride(-1) != 1 or b2.stride(0) != b2.shape[1]:
+            b2 = b2.contiguous()
+        M, N = a2.shape
+        h = torch.empty_like(a2)
+        y = torch.empty_like(a2)
+        rstd = torch.empty(M, dtype=torch.float32, device=a.device)
+        BLOCK = triton.next_power_of_2(N)
+        _fwd_add[(M,)](a2, b2, weight, h, y, rstd, N, eps, N, BLOCK=BLOCK, num_warps=8 if BLOCK >= 2048 else 4)
+        ctx.save_for_backward(h, weight, rstd)
+        ctx.shape = shape
+        return h.view(shape), y.view(shape)
+
+    @staticmethod
+    def backward(ctx, dh, dy):
+        h, weight, rstd = ctx.saved_tensors
+        M, N = h.shape
+        dx = torch.empty_like(h)
+        if dy is None:
+            dy = torch.zeros_like(h)
+        dy2 = dy.reshape(M, N)
+        if dy2.stride(-1) != 1 or dy2.stride(0) != N:
+            dy2 = dy2.contiguous()
+        has_dh = dh is not None
+        if has_dh:
+            dh2 = dh.reshape(M, N)
+            if dh2.stride(-1) != 1 or dh2.stride(0) != N:
+                dh2 = dh2.contiguous()
+        BLOCK = triton.next_power_of_2(N)
+        progs = min(M, _BWD_PROGS_PER_SM * torch.cuda.get_device_properties(h.device).multi_processor_count)
+        rows = (M + progs - 1) // progs
+        progs = (M + rows - 1) // rows
+        dwp = torch.empty(progs, N, dtype=torch.float32, device=h.device)
+        _bwd_add[(progs,)](dy2, dh2 if has_dh else dy2, h, weight, rstd, dx, dwp, M, N, N, rows, HAS_DH=has_dh,
+                           BLOCK=BLOCK, num_warps=8 if BLOCK >= 2048 else 4)
+        dw = dwp.sum(0).to(weight.dtype)
+        dx = dx.view(ctx.shape)
+        return dx, dx, dw, None
+
+
+def add_rms_norm(a, b, weight, eps):
+    """(a + b, rms_norm(a + b, weight, eps)) in one kernel each way (see above)."""
+    return _AddRMSNorm.apply(a, b, weight, eps)

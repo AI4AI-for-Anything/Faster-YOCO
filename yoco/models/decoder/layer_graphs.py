@@ -35,6 +35,9 @@ OWNER_EMBED = REDUCE_OWNER and os.environ.get('YOCO_OWNER_EMBED_GRAD', '0') == '
 DIAG_DEFER = PARAM_ALLREDUCE and os.environ.get('YOCO_DIAG_DEFER_REDUCE', '0') == '1'
 # with REDUCE_OWNER: the reductions go through the copy engines instead of NCCL kernels (ce_reduce.py)
 CE_REDUCE = REDUCE_OWNER and os.environ.get('YOCO_CE_REDUCE', '0') == '1'
+# with CE_REDUCE: sum the gradients of the output projection + cross decoder, then of the upper half of the self
+# decoder, during the backward (their own barriers; ce_reduce.CEReduce phases); only the rest is summed after it
+CE_PHASES = CE_REDUCE and os.environ.get('YOCO_CE_PHASES', '0') == '1'
 _EMBED = {}
 
 
@@ -201,7 +204,22 @@ def install_ddp_patch():
                 if CE_REDUCE:
                     from .ce_reduce import CEReduce
                     ps = [p for p in self.module.parameters() if p.requires_grad and p is not _EMBED.get('weight')]
-                    self._yoco_ce = CEReduce(ps, self._yoco_owner(), self.process_group)
+                    phase_of = {}
+                    if CE_PHASES:
+                        from .yoco import YOCO
+                        ys = [m for m in self.module.modules() if isinstance(m, YOCO)]
+                        if len(ys) == 1:
+                            y = ys[0]
+                            for m in (y.output_projection, y.layer_norm, y.cross_decoder):
+                                for q in m.parameters():
+                                    phase_of[id(q)] = 0
+                            lay = y.self_decoder.layers
+                            for m in lay[len(lay) // 2:]:
+                                for q in m.parameters():
+                                    phase_of[id(q)] = 1
+                            for q in ps:
+                                phase_of.setdefault(id(q), 2)
+                    self._yoco_ce = CEReduce(ps, self._yoco_owner(), self.process_group, phase_of)
                     if OWNER_EMBED and _EMBED.get('weight') is not None:
                         top = tops[0]
                         emb = top.embed_tokens
