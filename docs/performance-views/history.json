@@ -1,0 +1,305 @@
+{
+ "hardware": "8 NVIDIA L20Z GPUs (Hopper, sm_90, 80 GB) in one host; all full checks ran on the same host",
+ "workload": "YOCO-3B (yoco_3b, 3.45B parameters), upstream scripts/train.sh recipe with the recorded deviations: 8 data-parallel ranks, one 2,048-token sequence per GPU (16,384 tokens per update), bf16 with fp32 master weights and fp32 Adam state, ZeRO stage 1 (--zero-sharding os); no FP8",
+ "scope": "Every row is a full check by the same frozen judge: reference -> candidate -> reference in independent processes with cold compile caches (50 warm-up updates, then three 100-update windows per run), followed by the numerical gates. No row was bitwise identical; every row passed the statistical gate (equivalent, 3 seeds). speedup = min(total-time ratio, median-update ratio), each against the mean of the two reference runs. Rows are cumulative configurations, not isolated ablations. Commits are the commits of this repository; R18 and R19 use the same switch set with different code.",
+ "rows": [
+  {
+   "round": 3,
+   "rounds": "1-3",
+   "commit": "da94f9b",
+   "label": "Sharded ZeRO-1 work, layer CUDA graphs, one in-place all-gather",
+   "config": "optimizations/zero1_graphs_allgather.json",
+   "reference_s": 0.2508,
+   "candidate_s": 0.1802,
+   "reference_median_s": 0.2493,
+   "candidate_median_s": 0.1798,
+   "speedup_by_total": 1.3922,
+   "speedup_by_median": 1.3865,
+   "speedup": 1.3865,
+   "reference_gap": 0.0023,
+   "bitwise_tensors": 9249,
+   "exact_failures": 0,
+   "trajectory_seeds": 3,
+   "peak_memory_allocated_gib": 51.27,
+   "note": "the checked tree also contained the round-4 RMSNorm code, switched off (its source digest equals the R04 check's)"
+  },
+  {
+   "round": 4,
+   "rounds": "4",
+   "commit": "00c33a0",
+   "label": "Compiled RMSNorm + DDP bucket views",
+   "config": "optimizations/compiled_norm_bucket_view.json",
+   "reference_s": 0.2511,
+   "candidate_s": 0.1577,
+   "reference_median_s": 0.24955,
+   "candidate_median_s": 0.1576,
+   "speedup_by_total": 1.5927,
+   "speedup_by_median": 1.5834,
+   "speedup": 1.5834,
+   "reference_gap": 0.0012,
+   "bitwise_tensors": 5117,
+   "exact_failures": 0,
+   "trajectory_seeds": 3,
+   "peak_memory_allocated_gib": 51.2,
+   "note": "YOCO_DDP_BUCKET_VIEW was replaced by YOCO_PARAM_ALLREDUCE from round 5 on"
+  },
+  {
+   "round": 7,
+   "rounds": "5-7",
+   "commit": "c9cbd0e",
+   "label": "Per-parameter reduction to the optimizer-state owner, no host syncs",
+   "config": "optimizations/reduce_to_owner.json",
+   "reference_s": 0.252,
+   "candidate_s": 0.146,
+   "reference_median_s": 0.25,
+   "candidate_median_s": 0.146,
+   "speedup_by_total": 1.7262,
+   "speedup_by_median": 1.7123,
+   "speedup": 1.7123,
+   "reference_gap": 0.0016,
+   "bitwise_tensors": 5127,
+   "exact_failures": 0,
+   "trajectory_seeds": 3,
+   "peak_memory_allocated_gib": 51.2
+  },
+  {
+   "round": 9,
+   "rounds": "8-9",
+   "commit": "5fc4184",
+   "label": "Triton RMSNorm",
+   "config": "optimizations/triton_norm.json",
+   "reference_s": 0.2519,
+   "candidate_s": 0.1432,
+   "reference_median_s": 0.24975,
+   "candidate_median_s": 0.14315,
+   "speedup_by_total": 1.7591,
+   "speedup_by_median": 1.7447,
+   "speedup": 1.7447,
+   "reference_gap": 0.004,
+   "bitwise_tensors": 5118,
+   "exact_failures": 0,
+   "trajectory_seeds": 3,
+   "peak_memory_allocated_gib": 51.2
+  },
+  {
+   "round": 17,
+   "rounds": "10-17",
+   "commit": "bfd2fd6",
+   "label": "Owner embedding gradient, fused subln, compiled retention, Triton loss",
+   "config": "optimizations/fused_ce_compiled_retention.json",
+   "reference_s": 0.2508,
+   "candidate_s": 0.1303,
+   "reference_median_s": 0.2494,
+   "candidate_median_s": 0.1299,
+   "speedup_by_total": 1.9251,
+   "speedup_by_median": 1.9199,
+   "speedup": 1.9199,
+   "reference_gap": 0.0066,
+   "bitwise_tensors": 5124,
+   "exact_failures": 0,
+   "trajectory_seeds": 3,
+   "peak_memory_allocated_gib": 50.36,
+   "note": "rounds 10-16 were screened one at a time and full-checked together"
+  },
+  {
+   "round": 18,
+   "rounds": "18",
+   "commit": "348f510",
+   "label": "Gradient reduction through the copy engines",
+   "config": "optimizations/copy_engine_reduce.json",
+   "reference_s": 0.2512,
+   "candidate_s": 0.1221,
+   "reference_median_s": 0.2497,
+   "candidate_median_s": 0.1218,
+   "speedup_by_total": 2.0573,
+   "speedup_by_median": 2.0501,
+   "speedup": 2.0501,
+   "reference_gap": 0.0026,
+   "bitwise_tensors": 5123,
+   "exact_failures": 0,
+   "trajectory_seeds": 3,
+   "peak_memory_allocated_gib": 56.42
+  },
+  {
+   "round": 19,
+   "rounds": "19",
+   "commit": "7d1be84",
+   "label": "Embedding gradient rows through the copy engines",
+   "config": "optimizations/copy_engine_reduce.json",
+   "reference_s": 0.2514,
+   "candidate_s": 0.1208,
+   "reference_median_s": 0.2495,
+   "candidate_median_s": 0.1204,
+   "speedup_by_total": 2.0813,
+   "speedup_by_median": 2.0723,
+   "speedup": 2.0723,
+   "reference_gap": 0.0008,
+   "bitwise_tensors": 5123,
+   "exact_failures": 0,
+   "trajectory_seeds": 3,
+   "peak_memory_allocated_gib": 56.42
+  },
+  {
+   "round": 25,
+   "rounds": "20-25",
+   "commit": "026c4ea",
+   "label": "Fused Adam + bf16 cast, Triton gradient scaling, fused q/k/v/g GEMM",
+   "config": "optimizations/fused_adam_qkvg.json",
+   "reference_s": 0.2519,
+   "candidate_s": 0.1179,
+   "reference_median_s": 0.24965,
+   "candidate_median_s": 0.1175,
+   "speedup_by_total": 2.1369,
+   "speedup_by_median": 2.1247,
+   "speedup": 2.1247,
+   "reference_gap": 0.0022,
+   "bitwise_tensors": 5123,
+   "exact_failures": 0,
+   "trajectory_seeds": 3,
+   "peak_memory_allocated_gib": 56.42,
+   "note": "final configuration; rounds 21, 22 and 25 adopted, 20, 23 and 24 gave no gain (switches off); commit recorded as f4f2819 in the optimization log before commit messages were edited"
+  }
+ ],
+ "final": {
+  "commit": "026c4ea",
+  "reference_runs": {
+   "ref_a": {
+    "s_per_update": 0.2522,
+    "median_update_s": 0.2498,
+    "window_s": [
+     25.17,
+     25.121,
+     25.367
+    ],
+    "tokens_per_s": 64966.9,
+    "peak_memory_allocated_gib": 52.14,
+    "peak_memory_reserved_gib": 53.68,
+    "startup_to_first_update_s": 74.2
+   },
+   "ref_b": {
+    "s_per_update": 0.2516,
+    "median_update_s": 0.2495,
+    "window_s": [
+     25.125,
+     25.084,
+     25.283
+    ],
+    "tokens_per_s": 65108.5,
+    "peak_memory_allocated_gib": 52.14,
+    "peak_memory_reserved_gib": 53.68,
+    "startup_to_first_update_s": 74.9
+   }
+  },
+  "candidate_run": {
+   "s_per_update": 0.1179,
+   "median_update_s": 0.1175,
+   "window_s": [
+    11.776,
+    11.799,
+    11.79
+   ],
+   "tokens_per_s": 138982.5,
+   "peak_memory_allocated_gib": 56.42,
+   "peak_memory_reserved_gib": 63.04,
+   "startup_to_first_update_s": 95.4
+  },
+  "speedup_by_total": 2.1369,
+  "speedup_by_median": 2.1247,
+  "speedup": 2.1247,
+  "speedup_bar": 1.02,
+  "tensors_checked": 38464,
+  "bitwise_tensors": 5123,
+  "exact_failures": 0,
+  "statistical_gate": {
+   "seeds": [
+    1,
+    2,
+    3
+   ],
+   "verdict": "equivalent",
+   "endpoints_nats": {
+    "loss_u005_015": {
+     "window": [
+      5,
+      15
+     ],
+     "mean_difference": 2.665e-05,
+     "delta": 0.002084,
+     "mean_in_sigma": 0.026,
+     "state": "within"
+    },
+    "loss_u015_025": {
+     "window": [
+      15,
+      25
+     ],
+     "mean_difference": -6e-08,
+     "delta": 0.00128,
+     "mean_in_sigma": -0.0,
+     "state": "within"
+    },
+    "loss_u025_035": {
+     "window": [
+      25,
+      35
+     ],
+     "mean_difference": -3.553e-05,
+     "delta": 0.000838,
+     "mean_in_sigma": -0.085,
+     "state": "within"
+    },
+    "loss_u035_050": {
+     "window": [
+      35,
+      50
+     ],
+     "mean_difference": 1.442e-05,
+     "delta": 0.000923,
+     "mean_in_sigma": 0.031,
+     "state": "within"
+    },
+    "loss_u050_100": {
+     "window": [
+      50,
+      100
+     ],
+     "mean_difference": -0.0009468,
+     "delta": 0.008496,
+     "mean_in_sigma": -0.223,
+     "state": "within"
+    },
+    "loss_u100_200": {
+     "window": [
+      100,
+      200
+     ],
+     "mean_difference": -0.00713389,
+     "delta": 0.019017,
+     "mean_in_sigma": -0.75,
+     "state": "within"
+    }
+   }
+  },
+  "versions": {
+   "python": "3.10.14",
+   "torch": "2.3.1+cu121",
+   "triton": "2.3.1",
+   "flash_attn": "2.6.3",
+   "apex": "0.1",
+   "fairseq": "1.0.0a0",
+   "fairscale": "0.4.0",
+   "infinibatch": "0.1.0",
+   "numpy": "1.23.0",
+   "tiktoken": "0.14.0"
+  },
+  "gpu": "NVIDIA L20Z x 8, driver 570.133.20",
+  "cost_gpu_hours": 2.527
+ },
+ "rounds_logged": 28,
+ "final_round": 25,
+ "excluded_rounds": {
+  "26": "split all-gather overlapping Adam: no gain",
+  "27": "clip norm fused into the owner sum: screened only, never full-checked",
+  "28": "parameter exchange overlapped with the next forward: unfinished at the stop"
+ }
+}

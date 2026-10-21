@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="648pt" height="324pt" viewBox="0 0 648 324" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.9.4, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 324
+L 648 324
+L 648 0
+L 0 0
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 155.52 246.24
+L 408.24 246.24
+L 408.24 100.44
+L 155.52 100.44
+z
+" style="fill: #ffffff"/>
+   </g>
+   <g id="matplotlib.axis_1">
+    <g id="xtick_1">
+     <g id="line2d_1">
+      <path d="M 155.52 246.24
+L 155.52 100.44
+" clip-path="url(#p07b22acb2a)" style="fill: none; stroke: #eadfe0; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_2"/>
+     <g id="text_1">
+      <text style="fill: #79696b; font: 10px 'DejaVu Sans'; text-anchor: middle" x="155.52" y="262.838437" transform="rotate(-0 155.52 262.838437)">0</text>
+     </g>
+    </g>
+    <g id="xtick_2">
+     <g id="line2d_3">
+      <path d="M 193.239403 246.24
+L 193.239403 100.44
+" clip-path="url(#p07b22acb2a)" style="fill: none; stroke: #eadfe0; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_4"/>
+     <g id="text_2">
+      <text style="fill: #79696b; font: 10px 'DejaVu Sans'; text-anchor: middle" x="193.239403" y="262.838437" transform="rotate(-0 193.239403 262.838437)">50</text>
+     </g>
+    </g>
+    <g id="xtick_3">
+     <g id="line2d_5">
+      <path d="M 230.958806 246.24
+L 230.958806 100.44
+" clip-path="url(#p07b22acb2a)" style="fill: none; stroke: #eadfe0; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_6"/>
+     <g id="text_3">
+      <text style="fill: #79696b; font: 10px 'DejaVu Sans'; text-anchor: middle" x="230.958806" y="262.838437" transform="rotate(-0 230.958806 262.838437)">100</text>
+     </g>
+    </g>
+    <g id="xtick_4">
+     <g id="line2d_7">
+      <path d="M 268.678209 246.24
+L 268.678209 100.44
+" clip-path="url(#p07b22acb2a)" style="fill: none; stroke: #eadfe0; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_8"/>
+     <g id="text_4">
+      <text style="fill: #79696b; font: 10px 'DejaVu Sans'; text-anchor: middle" x="268.678209" y="262.838437" transform="rotate(-0 268.678209 262.838437)">150</text>
+     </g>
+    </g>
+    <g id="xtick_5">
+     <g id="line2d_9">
+      <path d="M 306.397612 246.24
+L 306.397612 100.44
+" clip-path="url(#p07b22acb2a)" style="fill: none; stroke: #eadfe0; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_10"/>
+     <g id="text_5">
+      <text style="fill: #79696b; font: 10px 'DejaVu Sans'; text-anchor: middle" x="306.397612" y="262.838437" transform="rotate(-0 306.397612 262.838437)">200</text>
+     </g>
+    </g>
+    <g id="xtick_6">
+     <g id="line2d_11">
+      <path d="M 344.117015 246.24
+L 344.117015 100.44
+" clip-path="url(#p07b22acb2a)" style="fill: none; stroke: #eadfe0; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_12"/>
+     <g id="text_6">
+      <text style="fill: #79696b; font: 10px 'DejaVu Sans'; text-anchor: middle" x="344.117015" y="262.838437" transform="rotate(-0 344.117015 262.838437)">250</text>
+     </g>
+    </g>
+    <g id="text_7">
+     <text style="fill: #79696b; font: 11px 'DejaVu Sans'; text-anchor: middle" x="281.88" y="285.276406" transform="rotate(-0 281.88 285.276406)">Median time per training update (ms) ↓</text>
+    </g>
+   </g>
+   <g id="matplotlib.axis_2">
+    <g id="ytick_1">
+     <g id="line2d_13"/>
+     <g id="text_8">
+      <text style="fill: #79696b; font: 10px 'DejaVu Sans'; text-anchor: end" x="146.52" y="144.002855" transform="rotate(-0 146.52 144.002855)">Reference</text>
+     </g>
+    </g>
+    <g id="ytick_2">
+     <g id="line2d_14"/>
+     <g id="text_9">
+      <text style="fill: #79696b; font: 10px 'DejaVu Sans'; text-anchor: end" x="146.52" y="210.275582" transform="rotate(-0 146.52 210.275582)">Faster-YOCO</text>
+     </g>
+    </g>
+   </g>
+   <g id="patch_3">
+    <path d="M 155.52 246.24
+L 408.24 246.24
+" style="fill: none; stroke: #eadfe0; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 155.52 148.156364
+L 343.852979 148.156364
+L 343.852979 132.250909
+L 155.52 132.250909
+z
+" clip-path="url(#p07b22acb2a)" style="fill: #d7bdbf"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 155.52 214.429091
+L 244.160597 214.429091
+L 244.160597 198.523636
+L 155.52 198.523636
+z
+" clip-path="url(#p07b22acb2a)" style="fill: #8c0000"/>
+   </g>
+   <g id="text_10">
+    <text style="fill: #292122; font: 700 11.5px 'DejaVu Sans'; text-anchor: start" x="348.379307" y="143.376918" transform="rotate(-0 348.379307 143.376918)">249.7 ms</text>
+   </g>
+   <g id="text_11">
+    <text style="fill: #292122; font: 700 11.5px 'DejaVu Sans'; text-anchor: start" x="248.686925" y="209.649645" transform="rotate(-0 248.686925 209.649645)">117.5 ms</text>
+   </g>
+  </g>
+  <g id="text_12">
+   <text style="fill: #8c0000; font: 700 19px 'DejaVu Sans'; text-anchor: start" x="38.88" y="38.88" transform="rotate(-0 38.88 38.88)">Faster-YOCO, optimized with AI agents</text>
+  </g>
+  <g id="text_13">
+   <text style="fill: #79696b; font: 10.5px 'DejaVu Sans'; text-anchor: start" x="38.88" y="71.28" transform="rotate(-0 38.88 71.28)">YOCO-3B pretraining · 8 NVIDIA L20Z GPUs · 2,048 tokens per GPU · BF16, ZeRO-1, no FP8</text>
+  </g>
+  <g id="text_14">
+   <text style="fill: #8c0000; font: 700 35px 'DejaVu Sans'; text-anchor: middle" x="550.8" y="149.04" transform="rotate(-0 550.8 149.04)">2.12×</text>
+  </g>
+  <g id="text_15">
+   <text style="fill: #79696b; font: 12px 'DejaVu Sans'; text-anchor: middle" x="550.8" y="184.68" transform="rotate(-0 550.8 184.68)">update speedup</text>
+  </g>
+  <g id="text_16">
+   <text style="fill: #79696b; font: 10px 'DejaVu Sans'; text-anchor: middle" x="550.8" y="207.36" transform="rotate(-0 550.8 207.36)">full check: PASS</text>
+  </g>
+  <g id="text_17">
+   <text style="fill: #79696b; font: 9.5px 'DejaVu Sans'; text-anchor: start" x="38.88" y="299.7" transform="rotate(-0 38.88 299.7)">Reference → candidate → reference in independent processes on one host; reference = mean of the two reference runs.</text>
+  </g>
+  <g id="text_18">
+   <text style="fill: #79696b; font: 9.5px 'DejaVu Sans'; text-anchor: start" x="38.88" y="314.28" transform="rotate(-0 38.88 314.28)">Speedup = the smaller of the median-update ratio (2.1247×) and the total-time ratio (2.1369×).</text>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p07b22acb2a">
+   <rect x="155.52" y="100.44" width="252.72" height="145.8"/>
+  </clipPath>
+ </defs>
+</svg>

@@ -1,0 +1,73 @@
+{
+ "source": "Re-profile of the final configuration (torch profiler, rank 0, 5 updates after 50 warm-up updates; the profiled update takes about 121 ms instead of the 117.9 ms measured without instrumentation) and the ceiling accounting of the optimization log. 'now_ms' are the profiled per-update times of each component; the components overlap partly and do not sum to the update time. 'bound_ms' are the lower bounds estimated for each component on this hardware, as [low, high].",
+ "calibration": {
+  "bf16_dense_gemm_tflops": 750,
+  "bf16_dense_gemm_note": "torch.matmul 8192 x 8192 x 8192 on one GPU of the same host; the model's shapes at 2,048 tokens measured 551-732 TFLOP/s",
+  "hbm_copy_tb_s": 3.04,
+  "nvlink_gb_s_per_direction_per_gpu": 450
+ },
+ "components": [
+  {
+   "name": "GEMM",
+   "now_ms": 65.3,
+   "bound_ms": [
+    53.6,
+    59.0
+   ],
+   "note": "40.2 TFLOP per GPU per update (38.6 linear layers forward + backward, about 1.6 attention and retention products); 53.6 ms at 750 TFLOP/s, 57-59 ms at the measured rates of these shapes"
+  },
+  {
+   "name": "Other kernels",
+   "now_ms": 18.0,
+   "bound_ms": [
+    8.0,
+    10.0
+   ],
+   "note": "norms, rotary, gate-retention elementwise work and scans, SwiGLU, residual adds, loss, embedding; includes 1.9 ms for the q/k/v/g weight concatenation and its backward"
+  },
+  {
+   "name": "Launch gaps",
+   "now_ms": 3.6,
+   "bound_ms": [
+    2.0,
+    2.0
+   ],
+   "note": "1,830 gaps of at most a few microseconds between kernels in the forward and backward"
+  },
+  {
+   "name": "Gradient-reduction tail",
+   "now_ms": 3.6,
+   "bound_ms": [
+    1.5,
+    1.5
+   ],
+   "note": "2.7 ms waiting at the end of the backward for the last copy-engine pushes and the barrier, 0.9 ms owner sum"
+  },
+  {
+   "name": "bf16 parameter all-gather",
+   "now_ms": 17.35,
+   "bound_ms": [
+    13.4,
+    17.4
+   ],
+   "note": "every GPU receives 6.0 GB of updated bf16 parameters before the next update reads them; 13.4 ms at the NVLink ingress bound, 17.4 ms with NCCL"
+  },
+  {
+   "name": "Clip, Adam, casts (exposed)",
+   "now_ms": 5.3,
+   "bound_ms": [
+    1.5,
+    1.5
+   ],
+   "note": "fused Adam 4.4 ms (4.31e8 owned elements at 2.9 TB/s, the HBM bound) and gradient scaling 0.9 ms; about 1.5 ms would stay exposed if Adam were pipelined with the all-gather. Not shown: about 2 ms waiting for the slowest rank in the clip-norm all-reduce"
+  }
+ ],
+ "step_ms": {
+  "reference": 251.9,
+  "faster_yoco": 117.9,
+  "target_2x": 125.95,
+  "target_3x": 83.97
+ },
+ "step_note": "reference and Faster-YOCO: mean time per update of the final full check; targets relative to its reference",
+ "realistic_ceiling": "estimated after round 19: about 108-112 ms per update (about 2.25-2.3x) if the remaining credible items (q/k/v/g and fc1/gate GEMM fusion, summing gradients during the backward, Adam/all-gather pipelining, norm fused into the owner sum, fewer launches) gave their estimated gains. Tried afterwards: q/k/v/g fusion gave -0.3 ms, summing during the backward and the split all-gather overlapping Adam gave no gain, the fused norm -0.4 ms in screening only. An estimate, not a measurement."
+}

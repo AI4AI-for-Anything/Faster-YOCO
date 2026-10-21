@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.ipynb_checkpoints/
+
+# Training outputs, data and weights stay outside the repository
+/output/
+/outputs/
+/runs/
+/val/
+/data/
+/Data/
+*.pt
+*.pth
+*.ckpt
+*.parquet
+*.jsonl
+*.json.gz
+
+# Profiles and traces
+*.nsys-rep
+*.sqlite
+*.trace.json

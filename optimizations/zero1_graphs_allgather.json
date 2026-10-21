@@ -1,0 +1,8 @@
+{
+  "environment": {
+    "YOCO_ZERO1_FAST": "1",
+    "YOCO_LAYER_GRAPHS": "1",
+    "YOCO_ZERO1_ALLGATHER": "1",
+    "YOCO_ZERO1_PARAM_VIEWS": "1"
+  }
+}
