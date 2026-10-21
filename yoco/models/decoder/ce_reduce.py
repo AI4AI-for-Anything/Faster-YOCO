@@ -130,6 +130,33 @@ class CEReduce:
         self.stream = torch.cuda.Stream(device=dev)
         self.flag = torch.zeros(1, dtype=torch.float32, device=dev)
         self.pushed = 0
+        self.emb = None
+
+    def add_embedding(self, weight, owner, rows, padding_idx):
+        """The token-embedding gradient (layer_graphs.OWNER_EMBED) through the same copy stream and barrier: every
+        rank copies its `rows` token ids and embedding-output gradient rows into the owner's staging, the owner runs
+        embedding_dense_backward on all ranks' rows after the barrier. Same call on all ranks."""
+        dev, D = weight.device, weight.shape[1]
+        mine = owner == self.rank
+        ids = torch.empty((self.world, rows) if mine else (1,), dtype=torch.int64, device=dev)
+        grads = torch.empty((self.world, rows, D) if mine else (1,), dtype=weight.dtype, device=dev)
+        self.emb = {'weight': weight, 'owner': owner, 'rows': rows, 'D': D, 'pad': padding_idx, 'ids': ids,
+                    'grads': grads, 'ids_base': peer_pointers(ids, self.group),
+                    'grads_base': peer_pointers(grads, self.group), 'pushed': False}
+
+    def push_embedding(self, idx, g):
+        e = self.emb
+        if idx.numel() != e['rows'] or idx.dtype != torch.int64 or g.shape != (e['rows'], e['D']):
+            raise RuntimeError(f'ce_reduce: embedding rows {tuple(g.shape)} differ from the staging ({e["rows"]}, {e["D"]})')
+        cur = torch.cuda.current_stream(g.device)
+        self.stream.wait_stream(cur)
+        r = e['owner']
+        memcpy_async(e['ids_base'][r] + self.rank * e['rows'] * 8, idx.data_ptr(), e['rows'] * 8, self.stream)
+        memcpy_async(e['grads_base'][r] + self.rank * e['rows'] * e['D'] * g.element_size(), g.data_ptr(),
+                     g.numel() * g.element_size(), self.stream)
+        idx.record_stream(self.stream)
+        g.record_stream(self.stream)
+        e['pushed'] = True
 
     def push(self, p):
         r, off = self.where[id(p)]
@@ -153,9 +180,20 @@ class CEReduce:
         if self.pushed != len(self.where):
             raise RuntimeError(f'ce_reduce: {self.pushed} of {len(self.where)} gradients were produced this update')
         self.pushed = 0
+        e = self.emb
+        if e is not None and not e['pushed']:
+            raise RuntimeError('ce_reduce: no embedding gradient this update')
         with torch.cuda.stream(self.stream):
             work = dist.all_reduce(self.flag, group=self.group, async_op=True)
         work.wait()
+        if e is not None:
+            e['pushed'] = False
+            if e['owner'] == self.rank:
+                # x 1/world on the rows (exact, a power of two) == the AVG reduction of the summed table gradient
+                g_all = e['grads'].view(-1, e['D']).mul_(1.0 / self.world)
+                w = e['weight']
+                e['weight'].grad = torch.ops.aten.embedding_dense_backward(g_all, e['ids'].view(-1), w.shape[0],
+                                                                          e['pad'], False)
         G = self.G
         if G:
             BLOCK = 2048

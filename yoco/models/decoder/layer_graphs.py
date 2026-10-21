@@ -77,6 +77,9 @@ class _OwnerEmbedding(torch.autograd.Function):
         world, rank = dist.get_world_size(group), dist.get_rank(group)
         idx = tokens.reshape(-1).contiguous()
         g = grad.reshape(-1, grad.shape[-1]).contiguous()
+        if _EMBED.get('ce') is not None:
+            _EMBED['ce'].push_embedding(idx, g)     # formed on the owner after the copy-stream barrier
+            return None, None, None
         idx_all = idx.new_empty(world * idx.numel())
         g_all = g.new_empty(world * g.shape[0], g.shape[1])
         dist.all_gather_into_tensor(idx_all, idx, group=group)
@@ -199,6 +202,14 @@ def install_ddp_patch():
                     from .ce_reduce import CEReduce
                     ps = [p for p in self.module.parameters() if p.requires_grad and p is not _EMBED.get('weight')]
                     self._yoco_ce = CEReduce(ps, self._yoco_owner(), self.process_group)
+                    if OWNER_EMBED and _EMBED.get('weight') is not None:
+                        top = tops[0]
+                        emb = top.embed_tokens
+                        pad = emb.padding_idx
+                        pad = -1 if pad is None else (pad + emb.weight.shape[0] if pad < 0 else pad)
+                        self._yoco_ce.add_embedding(emb.weight, _EMBED['owner'],
+                                                    max(1, top.args.max_batch_size) * top.args.max_seq_len, pad)
+                        _EMBED['ce'] = self._yoco_ce
 
         def _yoco_grad_ready(self, p, deferred=False):
             dist = self._yoco_dist
