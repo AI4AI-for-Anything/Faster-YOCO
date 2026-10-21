@@ -13,15 +13,25 @@ This version runs the same computation for this recipe's path (no TPU, MoE, BMUF
 - the logged meters receive the same tensors; the per-update dict returned to the loop is not rounded to floats
   (the loop only tests it for None; the smoothed values are computed at each log interval as before);
 - the batch is copied to the GPU from pinned memory without blocking (upstream's .to(device, non_blocking=True) on a
-  pageable tensor synchronizes the stream, i.e. waits for the whole previous update).
+  pageable tensor synchronizes the stream, i.e. waits for the whole previous update);
+- the end-of-update logging makes no host sync either: the "clip" meter's 100/0 constants are cached on the device
+  (upstream's grad_norm.new_tensor(100) is a pageable host->device copy, which waits for the whole update), and for
+  fairseq's CrossEntropyCriterion with sentence_avg off the task/criterion metrics are logged by the same code with
+  (a) the `sample_size != ntokens` branch resolved without reading the GPU (that criterion logs sample_size = ntokens
+  for every sample on every rank, so the two summed values are always equal) and (b) AverageMeter.update's
+  `if n > 0` evaluated on the GPU with torch.where (the same sums and counts; nothing is added when n <= 0).
 """
 import contextlib
+import math
 import os
+import warnings
 
 import torch
 
 from fairseq import utils
-from fairseq.logging import metrics
+from fairseq.criterions.cross_entropy import CrossEntropyCriterion
+from fairseq.logging import meters, metrics
+from fairseq.tasks.fairseq_task import FairseqTask
 from fairseq import trainer as _trainer_mod
 
 ENABLED = os.environ.get('YOCO_TRAINER_NOSYNC', '0') == '1'
@@ -132,17 +142,76 @@ def _consistent_flag(self, grad_norm):
     return torch.isfinite(t).all() & (max_abs_diff / (t[0] + 1e-6) < 1e-6).all()
 
 
+_CONSTS = {}
+
+
+def _clip_consts(t):
+    """(t.new_tensor(100), t.new_tensor(0)), created once per device/dtype."""
+    key = (t.device, t.dtype)
+    if key not in _CONSTS:
+        _CONSTS[key] = (t.new_tensor(100), t.new_tensor(0))
+    return _CONSTS[key]
+
+
+def _log_scalar(key, value, weight=1, priority=10, round=None):
+    """metrics.log_scalar; for a GPU-tensor weight, AverageMeter.update's `if n > 0` is applied with torch.where."""
+    if not (torch.is_tensor(weight) and weight.device.type == 'cuda'):
+        return metrics.log_scalar(key, value, weight, priority=priority, round=round)
+    for agg in metrics.get_active_aggregators():
+        if key not in agg:
+            agg.add_meter(key, meters.AverageMeter(round=round), priority)
+        m = agg[key]
+        if type(m) is not meters.AverageMeter:
+            m.update(value, weight)
+        elif value is not None:
+            m.val = value
+            pos = weight > 0
+            m.sum = meters.type_as(m.sum, value) + torch.where(pos, value * weight, 0)
+            m.count = meters.type_as(m.count, weight) + torch.where(pos, weight, 0)
+
+
+def _plain_ce(self):
+    """True when the task and criterion metrics are FairseqTask's and CrossEntropyCriterion's (sentence_avg off)."""
+    task, crit = self.task, self.get_criterion()
+    return (type(task).reduce_metrics is FairseqTask.reduce_metrics
+            and type(task).aggregate_logging_outputs is FairseqTask.aggregate_logging_outputs
+            and type(crit) is CrossEntropyCriterion and not crit.sentence_avg)
+
+
+def _reduce_metrics_ce(logging_outputs):
+    """FairseqTask.reduce_metrics + CrossEntropyCriterion.reduce_metrics without host syncs (module docstring)."""
+    if not any("ntokens" in log for log in logging_outputs):
+        warnings.warn("ntokens not found in Criterion logging outputs, cannot log wpb or wps")
+    else:
+        ntokens = sum(log.get("ntokens", 0) for log in logging_outputs)
+        metrics.log_scalar("wpb", ntokens, priority=180, round=1)
+        metrics.log_speed("wps", ntokens, priority=90, round=1)
+    if not any("nsentences" in log for log in logging_outputs):
+        warnings.warn("nsentences not found in Criterion logging outputs, cannot log bsz")
+    else:
+        nsentences = sum(log.get("nsentences", 0) for log in logging_outputs)
+        metrics.log_scalar("bsz", nsentences, priority=190, round=1)
+    loss_sum = sum(log.get("loss", 0) for log in logging_outputs)
+    sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
+    _log_scalar("loss", loss_sum / sample_size / math.log(2), sample_size, round=3)
+    # sample_size == ntokens here (see the module docstring), i.e. upstream's else-branch:
+    metrics.log_derived("ppl", lambda meters: utils.get_perplexity(meters["loss"].avg))
+
+
 def _reduce_and_log_stats(self, logging_outputs, sample_size, grad_norm=None):
     if grad_norm is not None:
         metrics.log_speed("ups", 1.0, priority=100, round=2)
         metrics.log_scalar("gnorm", grad_norm, priority=400, round=3)
         if self.cfg.optimization.clip_norm > 0:
-            metrics.log_scalar("clip", torch.where(grad_norm > self.cfg.optimization.clip_norm,
-                                                   grad_norm.new_tensor(100), grad_norm.new_tensor(0)),
+            c100, c0 = _clip_consts(grad_norm)
+            metrics.log_scalar("clip", torch.where(grad_norm > self.cfg.optimization.clip_norm, c100, c0),
                                priority=500, round=1)
     with metrics.aggregate():
         if logging_outputs is not None:
-            self.task.reduce_metrics(logging_outputs, self.get_criterion())
+            if _plain_ce(self):
+                _reduce_metrics_ce(logging_outputs)
+            else:
+                self.task.reduce_metrics(logging_outputs, self.get_criterion())
             del logging_outputs
     return {"sample_size": sample_size}
 
