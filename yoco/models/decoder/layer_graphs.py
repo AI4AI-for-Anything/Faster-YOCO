@@ -33,6 +33,8 @@ OWNER_EMBED = REDUCE_OWNER and os.environ.get('YOCO_OWNER_EMBED_GRAD', '0') == '
 # diagnostic only (profiling the backward without communication overlap): YOCO_DIAG_DEFER_REDUCE=1 launches the
 # per-parameter reductions only in all_reduce_grads(), after the backward
 DIAG_DEFER = PARAM_ALLREDUCE and os.environ.get('YOCO_DIAG_DEFER_REDUCE', '0') == '1'
+# with REDUCE_OWNER: the reductions go through the copy engines instead of NCCL kernels (ce_reduce.py)
+CE_REDUCE = REDUCE_OWNER and os.environ.get('YOCO_CE_REDUCE', '0') == '1'
 _EMBED = {}
 
 
@@ -187,9 +189,16 @@ def install_ddp_patch():
                     tops = [m for m in self.module.modules() if isinstance(m, YOCO)]
                     if len(tops) == 1:
                         w = tops[0].embed_tokens.weight
+                        # its own communicator, so that it does not queue behind the NCCL reductions (with the
+                        # copy-engine reduction there are none during the backward: the DDP group is used)
                         _EMBED.update(weight=w, owner=self._yoco_owner()[id(w)],
-                                      group=dist.new_group(ranks=dist.get_process_group_ranks(self.process_group),
-                                                           backend='nccl'))
+                                      group=self.process_group if CE_REDUCE else dist.new_group(
+                                          ranks=dist.get_process_group_ranks(self.process_group), backend='nccl'))
+                self._yoco_ce = None
+                if CE_REDUCE:
+                    from .ce_reduce import CEReduce
+                    ps = [p for p in self.module.parameters() if p.requires_grad and p is not _EMBED.get('weight')]
+                    self._yoco_ce = CEReduce(ps, self._yoco_owner(), self.process_group)
 
         def _yoco_grad_ready(self, p, deferred=False):
             dist = self._yoco_dist
@@ -197,6 +206,9 @@ def install_ddp_patch():
                 return                                   # already formed on its owner (_OwnerEmbedding)
             if DIAG_DEFER and not deferred:
                 self._yoco_deferred.append(p)
+                return
+            if self._yoco_ce is not None:
+                self._yoco_ce.push(p)
                 return
             if REDUCE_OWNER:
                 owner = self._yoco_owner()[id(p)]
@@ -223,6 +235,8 @@ def install_ddp_patch():
             for w in self._yoco_works:
                 w.wait()
             self._yoco_works = []
+            if self._yoco_ce is not None:
+                self._yoco_ce.finish()
 
     _dfm.DistributedDataParallel = _GraphedDDP
 

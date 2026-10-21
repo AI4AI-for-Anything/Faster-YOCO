@@ -31,6 +31,12 @@ REDUCE_OWNER = (PARAM_VIEWS and os.environ.get('YOCO_PARAM_ALLREDUCE', '0') == '
 # tensor, so the product is computed in fp32 exactly as copy-then-multiply), and one foreach cast fp32 -> bf16
 # after the Adam step instead of one copy kernel per parameter
 ONE_PASS = os.environ.get('YOCO_Z1_ONE_PASS', '0') == '1'
+# the bf16 all-gather through the copy engines: after the owners' casts a 1-element NCCL all-reduce serves as a
+# GPU-side barrier, then every rank copies each peer's segment from the peer's buffer (CUDA IPC mapping, opened once)
+# with cudaMemcpyAsync, one copy stream per peer; the current stream then waits for the copies. A peer's segment is
+# rewritten only by its next cast, which follows that peer's next backward, which needs this rank's next forward
+# (gradient reduction), which waits for these copies.
+CE_ALLGATHER = PARAM_VIEWS and os.environ.get('YOCO_CE_ALLGATHER', '0') == '1'
 _PLACED = {}
 
 _orig_clip = _f16._FP16OptimizerMixin.clip_grad_norm
@@ -111,6 +117,11 @@ def _setup(self):
     oss._broadcast_params = lambda: None          # the fp32 broadcast is replaced by the bf16 one below
     st = {'local': local, 'buckets': buckets, 'rank': rank, 'group': group, 'global_ranks': oss._local_to_global_rank,
           'flat': flat, 'seg': seg, 'placed': placed}
+    if CE_ALLGATHER and placed:
+        from models.decoder.ce_reduce import peer_pointers
+        st['ce'] = {'peer_flat': peer_pointers(flat, group), 'streams': [torch.cuda.Stream() for _ in range(world - 1)],
+                    'flag': torch.zeros(1, dtype=torch.float32, device=flat.device),
+                    'nbytes': [buf.numel() * flat.element_size() for _, buf, _ in buckets]}
     self._z1 = st
     return st
 
@@ -120,7 +131,7 @@ def clip_grad_norm(self, max_norm, aggregate_norm_fn=None):
     if not st:
         return _orig_clip(self, max_norm, aggregate_norm_fn)
     params = [p for p in self.fp16_params if p.requires_grad]
-    for p in params:
+    for p in ([p16 for p16, _ in st['local']] if REDUCE_OWNER else params):     # only owned grads are used then
         if p.grad is None:
             p.grad = torch.zeros_like(p)
     if REDUCE_OWNER:
@@ -172,7 +183,21 @@ def step(self, closure=None, groups=None):
             else:
                 for p16, p32, v in views:
                     v.copy_(p32.data)
-    if st['flat'] is not None:
+    if st.get('ce'):
+        from models.decoder.ce_reduce import memcpy_async
+        ce, flat, seg = st['ce'], st['flat'], st['seg']
+        work = dist.all_reduce(ce['flag'], group=st['group'], async_op=True)      # after every owner's cast
+        cur = torch.cuda.current_stream()
+        world, sb = len(ce['peer_flat']), seg * flat.element_size()
+        for i, s in enumerate(ce['streams']):
+            q = (rank + 1 + i) % world
+            with torch.cuda.stream(s):
+                work.wait()
+            if ce['nbytes'][q]:
+                memcpy_async(flat.data_ptr() + q * sb, ce['peer_flat'][q] + q * sb, ce['nbytes'][q], s)
+        for s in ce['streams']:
+            cur.wait_stream(s)
+    elif st['flat'] is not None:
         flat, seg = st['flat'], st['seg']
         dist.all_gather_into_tensor(flat, flat[rank * seg:(rank + 1) * seg], group=st['group'])
     else:
