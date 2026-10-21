@@ -78,6 +78,48 @@ def _prepare_sample(self, sample):
     return sample, False
 
 
+def _aggregate(self, logging_outputs, *extra_stats_to_sum, ignore=False):
+    """Trainer._fast_stat_sync_sum / distributed_utils.all_reduce_dict with the host values copied from pinned
+    memory without blocking (same keys, same order, same double-precision all-reduces, same results)."""
+    if not self.task.__class__.logging_outputs_can_be_summed(self.get_criterion()):
+        return self._aggregate_logging_outputs(logging_outputs, *extra_stats_to_sum, ignore=ignore)
+    data = {}
+    for i, stat in enumerate(extra_stats_to_sum):
+        data["extra_stats_" + str(i)] = stat
+    if len(logging_outputs) > 0:
+        log_keys = list(logging_outputs[0].keys())
+        for k in log_keys:
+            if not ignore:
+                v = sum(log[k] for log in logging_outputs if k in log)
+            else:
+                v = logging_outputs[0][k]
+                v = torch.zeros_like(v) if torch.is_tensor(v) else 0
+            data["logging_outputs_" + k] = v
+    else:
+        log_keys = None
+    device, group = self.device, self.data_parallel_process_group
+    cpu_keys, dev_keys = [], []
+    for k, t in data.items():
+        (dev_keys if torch.is_tensor(t) and t.device.type == device.type else cpu_keys).append(k)
+    out = {}
+    if cpu_keys:
+        host = torch.tensor([float(data[k]) if not torch.is_tensor(data[k]) else float(data[k].item())
+                             for k in cpu_keys], dtype=torch.double).pin_memory()
+        buf = host.to(device=device, non_blocking=True)
+        _trainer_mod.distributed_utils.all_reduce(buf, group=group)
+        for k, v in zip(cpu_keys, buf):
+            out[k] = v
+    if dev_keys:
+        vals = [data[k].to(dtype=torch.double) for k in dev_keys]
+        buf = torch.cat([t.view(-1) for t in vals])
+        _trainer_mod.distributed_utils.all_reduce(buf, group=group)
+        for k, v, orig in zip(dev_keys, torch.split(buf, [t.numel() for t in vals]), vals):
+            out[k] = v.view_as(orig)
+    extra = [out["extra_stats_" + str(i)] for i in range(len(extra_stats_to_sum))]
+    logging_outputs = [{k: out["logging_outputs_" + k] for k in log_keys}] if log_keys is not None else []
+    return logging_outputs, extra
+
+
 def _consistent_flag(self, grad_norm):
     """The same test as Trainer._check_grad_norms, as a GPU bool (no host sync)."""
     if self._grad_norm_buf is None:
@@ -150,8 +192,8 @@ def train_step(self, samples, raise_oom=False):
 
     if self._sync_stats():
         train_time = self._local_cumulative_training_time()
-        logging_outputs, (sample_size, ooms, total_train_time) = self._aggregate_logging_outputs(
-            logging_outputs, sample_size, ooms, train_time, ignore=is_dummy_batch)
+        logging_outputs, (sample_size, ooms, total_train_time) = _aggregate(
+            self, logging_outputs, sample_size, ooms, train_time, ignore=is_dummy_batch)
         self._cumulative_training_time = total_train_time / self.data_parallel_world_size
 
     with torch.autograd.profiler.record_function("reduce-grads"):

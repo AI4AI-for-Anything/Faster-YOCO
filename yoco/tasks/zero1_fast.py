@@ -145,11 +145,11 @@ def step(self, closure=None, groups=None):
     factor = self._multiply_factor
     for p16, p32 in st['local']:
         if p16.grad is None:
-            p32.grad.zero_()
-        else:
-            p32.grad.copy_(p16.grad)
-        if torch.is_tensor(factor) or factor != 1.0:
-            p32.grad.mul_(factor.to(p32.grad.device) if torch.is_tensor(factor) else factor)
+            p16.grad = torch.zeros_like(p16)
+    g32 = [p32.grad for _, p32 in st['local']]
+    torch._foreach_copy_(g32, [p16.grad for p16, _ in st['local']])      # the same per-element copies and multiplies
+    if torch.is_tensor(factor) or factor != 1.0:
+        torch._foreach_mul_(g32, factor.to(g32[0].device) if torch.is_tensor(factor) else factor)
     self._multiply_factor = 1.0
     self._needs_sync = False
     self.fp32_optimizer.step(closure, groups=groups)          # the Adam step on this rank's shard (OSS)

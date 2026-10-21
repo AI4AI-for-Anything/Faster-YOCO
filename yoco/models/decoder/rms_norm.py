@@ -16,6 +16,8 @@ def _rms(x, weight, eps: float):
 
 
 _rms_fused = torch.compile(_rms, dynamic=False) if _COMPILE else None
+# switch YOCO_TRITON_NORM=1: hand-written fused forward/backward kernels (rms_triton.py); takes precedence
+_TRITON = os.environ.get('YOCO_TRITON_NORM', '0') == '1'
 
 
 class RMSNorm(nn.Module):
@@ -33,6 +35,9 @@ class RMSNorm(nn.Module):
         return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
 
     def forward(self, x):
+        if _TRITON and x.is_cuda and x.dtype in (torch.bfloat16, torch.float16):
+            from .rms_triton import rms_norm
+            return rms_norm(x, self.weight, self.eps)
         if _rms_fused is not None and x.is_cuda:
             return _rms_fused(x, self.weight, self.eps)
         output = self._norm(x.float()).type_as(x)
