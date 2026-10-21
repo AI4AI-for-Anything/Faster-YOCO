@@ -27,6 +27,10 @@ ALLGATHER = os.environ.get('YOCO_ZERO1_ALLGATHER', '0') == '1'
 PARAM_VIEWS = ALLGATHER and os.environ.get('YOCO_ZERO1_PARAM_VIEWS', '0') == '1'
 REDUCE_OWNER = (PARAM_VIEWS and os.environ.get('YOCO_PARAM_ALLREDUCE', '0') == '1'
                 and os.environ.get('YOCO_GRAD_REDUCE_OWNER', '0') == '1')
+# one pass for the shard's master gradients: g32 = float(g16) * factor (torch.mul with the factor as a 1-element fp32
+# tensor, so the product is computed in fp32 exactly as copy-then-multiply), and one foreach cast fp32 -> bf16
+# after the Adam step instead of one copy kernel per parameter
+ONE_PASS = os.environ.get('YOCO_Z1_ONE_PASS', '0') == '1'
 _PLACED = {}
 
 _orig_clip = _f16._FP16OptimizerMixin.clip_grad_norm
@@ -147,17 +151,27 @@ def step(self, closure=None, groups=None):
         if p16.grad is None:
             p16.grad = torch.zeros_like(p16)
     g32 = [p32.grad for _, p32 in st['local']]
-    torch._foreach_copy_(g32, [p16.grad for p16, _ in st['local']])      # the same per-element copies and multiplies
-    if torch.is_tensor(factor) or factor != 1.0:
-        torch._foreach_mul_(g32, factor.to(g32[0].device) if torch.is_tensor(factor) else factor)
+    if ONE_PASS and g32 and (torch.is_tensor(factor) or factor != 1.0):
+        dev = g32[0].device
+        f1 = (factor.to(device=dev, dtype=torch.float32) if torch.is_tensor(factor)
+              else torch.tensor(float(factor), dtype=torch.float32, device=dev)).reshape(1)
+        for (p16, _), g in zip(st['local'], g32):
+            torch.mul(p16.grad, f1, out=g)
+    else:
+        torch._foreach_copy_(g32, [p16.grad for p16, _ in st['local']])  # the same per-element copies and multiplies
+        if torch.is_tensor(factor) or factor != 1.0:
+            torch._foreach_mul_(g32, factor.to(g32[0].device) if torch.is_tensor(factor) else factor)
     self._multiply_factor = 1.0
     self._needs_sync = False
     self.fp32_optimizer.step(closure, groups=groups)          # the Adam step on this rank's shard (OSS)
     rank = st['rank']
     for r, buf, views in st['buckets']:
         if r == rank:
-            for p16, p32, v in views:
-                v.copy_(p32.data)
+            if ONE_PASS and views:
+                torch._foreach_copy_([v for _, _, v in views], [p32.data for _, p32, _ in views])
+            else:
+                for p16, p32, v in views:
+                    v.copy_(p32.data)
     if st['flat'] is not None:
         flat, seg = st['flat'], st['seg']
         dist.all_gather_into_tensor(flat, flat[rank * seg:(rank + 1) * seg], group=st['group'])
