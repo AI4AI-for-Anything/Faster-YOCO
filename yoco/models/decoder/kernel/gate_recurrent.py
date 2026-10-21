@@ -177,7 +177,43 @@ def inner_chunk(q, k, v, g):
     inner = attn @ v
     return inner
     
+# switch YOCO_COMPILE_GR=1: the elementwise work around the two chunk products of the training path (key scaling,
+# gate cumsum, decay factors and the decayed v / q operands, made contiguous for the batched GEMMs) compiled with
+# Inductor in two pieces around the Triton recurrence; the same expressions, the products stay cuBLAS bmm calls
+import os as _os
+_COMPILE_GR = _os.environ.get('YOCO_COMPILE_GR', '0') == '1'
+
+
+def _gr_pre(k, v, g, scale: float):
+    k = k * scale
+    g = g.float().cumsum(-1)
+    kv = k.transpose(-1, -2) @ (v * (-g + g[:, :, :, -1, None]).exp()[..., None].to(v.dtype))
+    cross_decay = g[:, :, :, -1].exp().to(kv.dtype)
+    return k, g, kv, cross_decay
+
+
+def _gr_post(q, g, S):
+    return (q * g[..., None].exp().to(q.dtype)) @ S
+
+
+if _COMPILE_GR:
+    _gr_pre = torch.compile(_gr_pre, dynamic=False)
+    _gr_post = torch.compile(_gr_post, dynamic=False)
+
+
 def chunk_gate_retention(q, k, v, g, chunk_size=64, last_hidden_state=None):
+    if _COMPILE_GR and last_hidden_state is None and q.is_cuda and torch.is_grad_enabled():
+        bsz, num_head, tgt_len, key_dim = q.shape
+        head_dim = v.shape[-1]
+        num_chunk = tgt_len // chunk_size
+        q = q.view(bsz, num_head, num_chunk, chunk_size, key_dim)
+        k = k.view(bsz, num_head, num_chunk, chunk_size, key_dim)
+        v = v.view(bsz, num_head, num_chunk, chunk_size, head_dim)
+        g = g.view(bsz, num_head, num_chunk, chunk_size)
+        k, g, kv, cross_decay = _gr_pre(k, v, g, key_dim ** -0.5)
+        S = chunk_gate_recurrent(kv, cross_decay, None)
+        o = _gr_post(q, g, S) + inner_chunk(q, k, v, g)
+        return o.view(bsz, num_head, tgt_len, head_dim)
     bsz, num_head, tgt_len, key_dim = q.shape
     head_dim = v.shape[-1]
     num_chunk = tgt_len // chunk_size
