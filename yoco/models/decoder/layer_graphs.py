@@ -19,6 +19,9 @@ BUCKET_VIEW = os.environ.get('YOCO_DDP_BUCKET_VIEW', '0') == '1'
 # waited for in all_reduce_grads() (called by fairseq's trainer before clipping); replaces DDP's bucketed reducer
 # and its copy-and-scale of every gradient into the buckets
 PARAM_ALLREDUCE = os.environ.get('YOCO_PARAM_ALLREDUCE', '0') == '1'
+# with PARAM_ALLREDUCE: reduce (AVG) each gradient only to the rank owning its optimizer state (ZeRO-2 style;
+# needs zero1_fast's parameter placement for the owner map; the clip norm is then summed across owners)
+REDUCE_OWNER = PARAM_ALLREDUCE and os.environ.get('YOCO_GRAD_REDUCE_OWNER', '0') == '1'
 
 
 class _SelfCall(nn.Module):
@@ -132,8 +135,20 @@ def install_ddp_patch():
 
         def _yoco_grad_ready(self, p):
             dist = self._yoco_dist
+            if REDUCE_OWNER:
+                owner = self._yoco_owner()[id(p)]
+                self._yoco_works.append(dist.reduce(p.grad, dst=dist.get_global_rank(self.process_group, owner)
+                                                    if self.process_group is not None else owner,
+                                                    op=dist.ReduceOp.AVG, group=self.process_group, async_op=True))
+                return
             self._yoco_works.append(dist.all_reduce(p.grad, op=dist.ReduceOp.AVG, group=self.process_group,
                                                     async_op=True))
+
+        def _yoco_owner(self):
+            from tasks import zero1_fast
+            if not zero1_fast._PLACED:
+                raise RuntimeError('YOCO_GRAD_REDUCE_OWNER needs YOCO_ZERO1_PARAM_VIEWS (the owner map)')
+            return zero1_fast._PLACED['owner']
 
         def all_reduce_grads(self):
             if self._yoco_works is None:

@@ -25,6 +25,8 @@ ENABLED = os.environ.get('YOCO_ZERO1_FAST', '0') == '1'
 ALLGATHER = os.environ.get('YOCO_ZERO1_ALLGATHER', '0') == '1'
 # the bf16 model parameters live in the all-gather buffer itself (placed before DDP and the layer graphs)
 PARAM_VIEWS = ALLGATHER and os.environ.get('YOCO_ZERO1_PARAM_VIEWS', '0') == '1'
+REDUCE_OWNER = (PARAM_VIEWS and os.environ.get('YOCO_PARAM_ALLREDUCE', '0') == '1'
+                and os.environ.get('YOCO_GRAD_REDUCE_OWNER', '0') == '1')
 _PLACED = {}
 
 _orig_clip = _f16._FP16OptimizerMixin.clip_grad_norm
@@ -117,7 +119,17 @@ def clip_grad_norm(self, max_norm, aggregate_norm_fn=None):
     for p in params:
         if p.grad is None:
             p.grad = torch.zeros_like(p)
-    grad_norm = self._multiply_factor * utils.clip_grad_norm_(params, 0, aggregate_norm_fn)
+    if REDUCE_OWNER:
+        # only the owner holds the reduced gradient: sum the owners' squared norms (fairseq's routine per owner)
+        owned = [p16 for p16, _ in st['local']]
+        sq = utils.clip_grad_norm_(owned, 0, None).float() ** 2
+        dist.all_reduce(sq, group=st['group'])
+        norm = sq.sqrt()
+        if aggregate_norm_fn is not None:
+            norm = aggregate_norm_fn(norm)
+        grad_norm = self._multiply_factor * norm
+    else:
+        grad_norm = self._multiply_factor * utils.clip_grad_norm_(params, 0, aggregate_norm_fn)
     if max_norm > 0.0:
         clip_coef = (max_norm / (grad_norm + 1e-6)).clamp_(max=1)
         self._multiply_factor *= clip_coef

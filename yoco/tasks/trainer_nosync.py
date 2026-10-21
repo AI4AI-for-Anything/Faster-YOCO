@@ -11,7 +11,9 @@ This version runs the same computation for this recipe's path (no TPU, MoE, BMUF
   to pinned host memory without blocking, and raised as the same FloatingPointError as soon as the copy has landed
   (at the latest one update later, before that update's optimizer step);
 - the logged meters receive the same tensors; the per-update dict returned to the loop is not rounded to floats
-  (the loop only tests it for None; the smoothed values are computed at each log interval as before).
+  (the loop only tests it for None; the smoothed values are computed at each log interval as before);
+- the batch is copied to the GPU from pinned memory without blocking (upstream's .to(device, non_blocking=True) on a
+  pageable tensor synchronizes the stream, i.e. waits for the whole previous update).
 """
 import contextlib
 import os
@@ -50,6 +52,30 @@ class _Pending:
             raise FloatingPointError('Fatal error: gradients are inconsistent between workers.')
         if not finite:
             raise FloatingPointError('gradients are Nan/Inf')
+
+
+def _prepare_sample(self, sample):
+    """Trainer._prepare_sample for this path, with a non-blocking host->device copy from pinned memory."""
+    if sample == "DUMMY" or sample is None or len(sample) == 0:
+        return self._prepare_sample_orig(sample)
+    if self.cuda and not self.pipeline_model_parallel:
+        dev = torch.cuda.current_device()
+
+        def to_dev(t):
+            if t.device.type == 'cpu':
+                return t.pin_memory().to(device=dev, non_blocking=True)
+            return t.to(device=dev, non_blocking=True)
+        sample = utils.apply_to_sample(to_dev, sample)
+    else:
+        return self._prepare_sample_orig(sample)
+    if self.cfg.common.fp16:
+        sample = utils.apply_to_sample(lambda t: t.half() if t.dtype is torch.float32 else t, sample)
+    if self.cfg.common.bf16:
+        sample = utils.apply_to_sample(lambda t: t.to(dtype=torch.bfloat16) if t.dtype is torch.float32 else t,
+                                       sample)
+    if self._dummy_batch == "DUMMY":
+        self._dummy_batch = sample
+    return sample, False
 
 
 def _consistent_flag(self, grad_norm):
@@ -95,7 +121,7 @@ def train_step(self, samples, raise_oom=False):
 
     logging_outputs, sample_size, ooms = [], 0, 0
     for i, sample in enumerate(samples):
-        sample, is_dummy_batch = self._prepare_sample(sample)
+        sample, is_dummy_batch = _prepare_sample(self, sample)
 
         def maybe_no_sync():
             if self.data_parallel_world_size > 1 and hasattr(self.model, "no_sync") and i < len(samples) - 1:
@@ -169,4 +195,5 @@ def train_step(self, samples, raise_oom=False):
 
 
 if ENABLED:
+    _trainer_mod.Trainer._prepare_sample_orig = _trainer_mod.Trainer._prepare_sample
     _trainer_mod.Trainer.train_step = train_step
