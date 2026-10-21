@@ -99,3 +99,75 @@ class _RMSNorm(torch.autograd.Function):
 
 def rms_norm(x, weight, eps):
     return _RMSNorm.apply(x, weight, eps)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Per-head RMSNorm without weight (GateRetention.subln) fused with the head -> token transpose that follows it:
+#     out = subln(x).transpose(1, 2).reshape(B, L, H * D)      x: (B, H, L, D) contiguous, D small (128)
+# Same arithmetic as rms_norm(x, None, eps) (fp32 statistics, one bf16 rounding); ROWS rows per program instead of one
+# (a 128-element row per program leaves the kernel latency-bound), and the result is written straight into the
+# (B, L, H, D) layout, so the copy that .transpose(1, 2).reshape() makes is not needed (forward or backward).
+@triton.jit
+def _fwd_heads(X, Y, RSTD, M, N, L, H, eps, BLOCK: tl.constexpr, ROWS: tl.constexpr):
+    rows = tl.program_id(0) * ROWS + tl.arange(0, ROWS)
+    cols = tl.arange(0, BLOCK)
+    rmask = rows < M
+    mask = rmask[:, None] & (cols < N)[None, :]
+    x = tl.load(X + rows[:, None] * N + cols[None, :], mask=mask, other=0.0).to(tl.float32)
+    ms = tl.sum(x * x, axis=1) / N
+    r = 1.0 / tl.sqrt(ms + eps)
+    y = (x * r[:, None]).to(Y.dtype.element_ty)
+    orow = ((rows // (H * L)) * L + rows % L) * H + (rows // L) % H
+    tl.store(Y + orow[:, None] * N + cols[None, :], y, mask=mask)
+    tl.store(RSTD + rows, r, mask=rmask)
+
+
+@triton.jit
+def _bwd_heads(DY, X, RSTD, DX, M, N, L, H, BLOCK: tl.constexpr, ROWS: tl.constexpr):
+    rows = tl.program_id(0) * ROWS + tl.arange(0, ROWS)
+    cols = tl.arange(0, BLOCK)
+    rmask = rows < M
+    mask = rmask[:, None] & (cols < N)[None, :]
+    x = tl.load(X + rows[:, None] * N + cols[None, :], mask=mask, other=0.0).to(tl.float32)
+    orow = ((rows // (H * L)) * L + rows % L) * H + (rows // L) % H
+    dy = tl.load(DY + orow[:, None] * N + cols[None, :], mask=mask, other=0.0).to(tl.float32)
+    r = tl.load(RSTD + rows, mask=rmask, other=0.0)
+    nf = x * r[:, None]
+    c = tl.sum(dy * nf, axis=1) / N
+    dx = r[:, None] * (dy - nf * c[:, None])
+    tl.store(DX + rows[:, None] * N + cols[None, :], dx.to(DX.dtype.element_ty), mask=mask)
+
+
+_HEAD_ROWS = 32
+
+
+class _RMSNormHeads(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, eps):
+        B, H, L, N = x.shape
+        x = x.contiguous()
+        M = B * H * L
+        y = torch.empty(B, L, H * N, dtype=x.dtype, device=x.device)
+        rstd = torch.empty(M, dtype=torch.float32, device=x.device)
+        BLOCK = triton.next_power_of_2(N)
+        _fwd_heads[(triton.cdiv(M, _HEAD_ROWS),)](x, y, rstd, M, N, L, H, eps, BLOCK=BLOCK, ROWS=_HEAD_ROWS,
+                                                   num_warps=4)
+        ctx.save_for_backward(x, rstd)
+        return y
+
+    @staticmethod
+    def backward(ctx, dy):
+        x, rstd = ctx.saved_tensors
+        B, H, L, N = x.shape
+        M = B * H * L
+        dy = dy.contiguous()
+        dx = torch.empty_like(x)
+        BLOCK = triton.next_power_of_2(N)
+        _bwd_heads[(triton.cdiv(M, _HEAD_ROWS),)](dy, x, rstd, dx, M, N, L, H, BLOCK=BLOCK, ROWS=_HEAD_ROWS,
+                                                   num_warps=4)
+        return dx, None
+
+
+def rms_norm_heads(x, eps):
+    """subln(x).transpose(1, 2).reshape(B, L, H * D) for a weightless RMSNorm, x: (B, H, L, D)."""
+    return _RMSNormHeads.apply(x, eps)

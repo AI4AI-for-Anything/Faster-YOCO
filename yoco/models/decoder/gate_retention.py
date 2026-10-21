@@ -14,6 +14,11 @@ from .kernel.swiglu import swiglu
 
 from .model_parallel_init import qkvg_init_method, out_init_method
 
+import os
+# switch YOCO_SUBLN_FUSED=1: the weightless per-head subln and the head -> token transpose after it in one Triton
+# kernel each way (rms_triton.rms_norm_heads; same arithmetic as the Triton RMSNorm)
+_SUBLN_FUSED = os.environ.get('YOCO_SUBLN_FUSED', '0') == '1'
+
 class GateRetention(nn.Module):
 
     def __init__(
@@ -81,7 +86,12 @@ class GateRetention(nn.Module):
             else:
                 o = chunk_gate_retention(qr, kr, v, gt, chunk_size=256)
                 
-        o = self.subln(o).transpose(1, 2).reshape(bsz, tgt_len, self.num_heads * self.head_dim)
+        if (_SUBLN_FUSED and o.is_cuda and o.dtype == torch.bfloat16 and self.subln.weight is None
+                and o.dim() == 4 and o.shape[-1] <= 256):
+            from .rms_triton import rms_norm_heads
+            o = rms_norm_heads(o, self.subln.eps)
+        else:
+            o = self.subln(o).transpose(1, 2).reshape(bsz, tgt_len, self.num_heads * self.head_dim)
         o = swiglu(g, o)
         o = self.out_proj(o)
         return o
