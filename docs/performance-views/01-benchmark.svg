@@ -153,7 +153,7 @@ z
    <text style="fill: #8c0000; font: 700 19px 'DejaVu Sans'; text-anchor: start" x="38.88" y="38.88" transform="rotate(-0 38.88 38.88)">Faster-YOCO, optimized with AI agents</text>
   </g>
   <g id="text_13">
-   <text style="fill: #79696b; font: 10.5px 'DejaVu Sans'; text-anchor: start" x="38.88" y="71.28" transform="rotate(-0 38.88 71.28)">YOCO-3B pretraining · 8 NVIDIA L20Z GPUs · 2,048 tokens per GPU · BF16, ZeRO-1, no FP8</text>
+   <text style="fill: #79696b; font: 10.5px 'DejaVu Sans'; text-anchor: start" x="38.88" y="71.28" transform="rotate(-0 38.88 71.28)">YOCO-3B pretraining · eight 80 GB Hopper GPUs · 2,048 tokens per GPU · BF16, ZeRO-1, no FP8</text>
   </g>
   <g id="text_14">
    <text style="fill: #8c0000; font: 700 35px 'DejaVu Sans'; text-anchor: middle" x="550.8" y="149.04" transform="rotate(-0 550.8 149.04)">2.12×</text>

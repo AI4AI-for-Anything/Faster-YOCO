@@ -61,7 +61,7 @@ def hero():
     values = [final['reference_median_s'] * 1e3, final['candidate_median_s'] * 1e3]
     fig = plt.figure(figsize=(9, 4.5), facecolor='white')
     fig.text(.06, .88, 'Faster-YOCO, optimized with AI agents', color=RED, weight='bold', fontsize=19)
-    fig.text(.06, .78, 'YOCO-3B pretraining · 8 NVIDIA L20Z GPUs · 2,048 tokens per GPU · BF16, ZeRO-1, no FP8',
+    fig.text(.06, .78, 'YOCO-3B pretraining · eight 80 GB Hopper GPUs · 2,048 tokens per GPU · BF16, ZeRO-1, no FP8',
              color=MUTED, fontsize=10.5)
     ax = fig.add_axes([.24, .24, .39, .45])
     ax.barh([1, 0], values, color=[LIGHT, RED], height=.24, zorder=3)
@@ -94,7 +94,7 @@ def history():
     fig.text(.09, top(.79), 'Agent Optimization History', fontsize=21.5, weight='bold', color=INK)
     fig.text(.94, top(.65), f"{rows[-1]['speedup']:.2f}×", fontsize=29, ha='right', weight='bold', color=RED)
     fig.text(.94, top(.88), 'update speedup', fontsize=10.5, ha='right', color=MUTED)
-    fig.text(.09, top(1.31), f"Cumulative full-check speedup · 8 L20Z GPUs · 2,048 tokens per GPU · "
+    fig.text(.09, top(1.31), f"Cumulative full-check speedup · 8 Hopper GPUs · 2,048 tokens per GPU · "
              f"{len(rows)} full checks in {data['final_round']} rounds", fontsize=11, color=MUTED)
     ax = fig.add_axes([.09, top(4.25), .85, 2.67 / height])
     x = list(range(len(rows)))
@@ -215,7 +215,7 @@ def validation():
     fig = plt.figure(figsize=(12, 9.6), facecolor='white')
     fig.text(.06, .955, 'Faster-YOCO vs reference: 2 seeds × 20,000 updates', color=INK, weight='bold',
              fontsize=18)
-    fig.text(.06, .922, 'YOCO-3B, upstream recipe, 8 NVIDIA L20Z GPUs · loss in bits per token · held-out: 1.64M '
+    fig.text(.06, .922, 'YOCO-3B, upstream recipe, eight 80 GB Hopper GPUs · loss in bits per token · held-out: 1.64M '
              'fineweb-edu + 0.41M code tokens, mixed 0.8 / 0.2', color=MUTED, fontsize=10.5)
     axs = [fig.add_axes(r) for r in ([.07, .54, .4, .32], [.57, .54, .4, .32], [.07, .11, .4, .32],
                                      [.57, .11, .4, .32])]

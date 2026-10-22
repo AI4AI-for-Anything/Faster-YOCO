@@ -9,7 +9,7 @@ values in [`.harness/config.json`](../.harness/config.json) and
 
 ## Environment
 
-The checks and the validation ran on 8 NVIDIA L20Z GPUs (Hopper, sm_90, 80 GB, NVLink between all eight), driver
+The checks and the validation ran on 8 Hopper GPUs (sm_90, 80 GB, NVLink between all eight), driver
 570.133.20, with:
 
 | Package | Version |

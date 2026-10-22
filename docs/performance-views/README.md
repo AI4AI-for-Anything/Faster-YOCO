@@ -5,7 +5,7 @@ Regenerate all figures with `python docs/performance-views/render.py` (matplotli
 - `01-benchmark.svg`: the final full check of commit `026c4ea`. Reference runs 0.2522 and 0.2516 s per update (median
   updates 0.2498 and 0.2495 s), candidate 0.1179 s (median 0.1175 s; windows 11.776 / 11.799 / 11.790 s per 100
   updates). The bars show the median update; the speedup, 2.1247×, is the smaller of the median ratio and the
-  total-time ratio (2.1369×). 8 NVIDIA L20Z GPUs, 2,048 tokens per GPU.
+  total-time ratio (2.1369×). eight 80 GB Hopper GPUs, 2,048 tokens per GPU.
 - `02-history.svg`: the eight full checks, each with freshly measured reference runs on the same host
   ([history.json](history.json)). Points are cumulative configurations, not isolated ablations.
 - `03-time-budget.svg`: profiled time per update of each component of the final configuration (torch profiler,
