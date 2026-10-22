@@ -111,7 +111,7 @@ L 344.117015 100.44
     <g id="ytick_1">
      <g id="line2d_13"/>
      <g id="text_8">
-      <text style="fill: #79696b; font: 10px 'DejaVu Sans'; text-anchor: end" x="146.52" y="144.002855" transform="rotate(-0 146.52 144.002855)">Reference</text>
+      <text style="fill: #79696b; font: 10px 'DejaVu Sans'; text-anchor: end" x="146.52" y="144.002855" transform="rotate(-0 146.52 144.002855)">Baseline</text>
      </g>
     </g>
     <g id="ytick_2">
@@ -165,7 +165,7 @@ z
    <text style="fill: #79696b; font: 10px 'DejaVu Sans'; text-anchor: middle" x="550.8" y="207.36" transform="rotate(-0 550.8 207.36)">full check: PASS</text>
   </g>
   <g id="text_17">
-   <text style="fill: #79696b; font: 9.5px 'DejaVu Sans'; text-anchor: start" x="38.88" y="299.7" transform="rotate(-0 38.88 299.7)">Reference → candidate → reference in independent processes on one host; reference = mean of the two reference runs.</text>
+   <text style="fill: #79696b; font: 9.5px 'DejaVu Sans'; text-anchor: start" x="38.88" y="299.7" transform="rotate(-0 38.88 299.7)">Baseline → candidate → baseline in independent processes on one host; baseline = mean of the two baseline runs.</text>
   </g>
   <g id="text_18">
    <text style="fill: #79696b; font: 9.5px 'DejaVu Sans'; text-anchor: start" x="38.88" y="314.28" transform="rotate(-0 38.88 314.28)">Speedup = the smaller of the median-update ratio (2.1247×) and the total-time ratio (2.1369×).</text>

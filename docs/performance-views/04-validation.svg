@@ -1276,7 +1276,7 @@ L 176.307188 108.556594
 " style="fill: none; stroke: #a99a9c; stroke-width: 2.6; stroke-linecap: square"/>
     </g>
     <g id="text_27">
-     <text style="fill: #292122; font: 9px 'DejaVu Sans'; text-anchor: start" x="183.507188" y="111.706594" transform="rotate(-0 183.507188 111.706594)">Reference, seed 1</text>
+     <text style="fill: #292122; font: 9px 'DejaVu Sans'; text-anchor: start" x="183.507188" y="111.706594" transform="rotate(-0 183.507188 111.706594)">Baseline, seed 1</text>
     </g>
     <g id="line2d_50">
      <path d="M 158.307188 121.766906
@@ -1285,7 +1285,7 @@ L 176.307188 121.766906
 " style="fill: none; stroke-dasharray: 9.62,4.16; stroke-dashoffset: 0; stroke: #a99a9c; stroke-width: 2.6"/>
     </g>
     <g id="text_28">
-     <text style="fill: #292122; font: 9px 'DejaVu Sans'; text-anchor: start" x="183.507188" y="124.916906" transform="rotate(-0 183.507188 124.916906)">Reference, seed 2</text>
+     <text style="fill: #292122; font: 9px 'DejaVu Sans'; text-anchor: start" x="183.507188" y="124.916906" transform="rotate(-0 183.507188 124.916906)">Baseline, seed 2</text>
     </g>
     <g id="line2d_51">
      <path d="M 282.609844 108.556594
@@ -1638,7 +1638,7 @@ L 608.307187 108.556594
      </g>
     </g>
     <g id="text_48">
-     <text style="fill: #292122; font: 9px 'DejaVu Sans'; text-anchor: start" x="615.507187" y="111.706594" transform="rotate(-0 615.507187 111.706594)">Reference, seed 1</text>
+     <text style="fill: #292122; font: 9px 'DejaVu Sans'; text-anchor: start" x="615.507187" y="111.706594" transform="rotate(-0 615.507187 111.706594)">Baseline, seed 1</text>
     </g>
     <g id="line2d_88">
      <path d="M 590.307187 121.766906
@@ -1650,7 +1650,7 @@ L 608.307187 121.766906
      </g>
     </g>
     <g id="text_49">
-     <text style="fill: #292122; font: 9px 'DejaVu Sans'; text-anchor: start" x="615.507187" y="124.916906" transform="rotate(-0 615.507187 124.916906)">Reference, seed 2</text>
+     <text style="fill: #292122; font: 9px 'DejaVu Sans'; text-anchor: start" x="615.507187" y="124.916906" transform="rotate(-0 615.507187 124.916906)">Baseline, seed 2</text>
     </g>
     <g id="line2d_89">
      <path d="M 714.609844 108.556594
@@ -2761,7 +2761,7 @@ L 81.194375 602.629469
 " style="fill: none; stroke: #a99a9c; stroke-width: 1.8; stroke-linecap: square"/>
     </g>
     <g id="text_71">
-     <text style="fill: #292122; font: 8.6px 'DejaVu Sans'; text-anchor: start" x="88.074375" y="605.639469" transform="rotate(-0 88.074375 605.639469)">Y: reference seed 2 − seed 1</text>
+     <text style="fill: #292122; font: 8.6px 'DejaVu Sans'; text-anchor: start" x="88.074375" y="605.639469" transform="rotate(-0 88.074375 605.639469)">Y: baseline seed 2 − seed 1</text>
     </g>
     <g id="line2d_128">
      <path d="M 222.057 589.767094
@@ -2770,7 +2770,7 @@ L 239.257 589.767094
 " style="fill: none; stroke: #8c0000; stroke-width: 1.6; stroke-linecap: square"/>
     </g>
     <g id="text_72">
-     <text style="fill: #292122; font: 8.6px 'DejaVu Sans'; text-anchor: start" x="246.137" y="592.777094" transform="rotate(-0 246.137 592.777094)">E1: Faster-YOCO − reference, seed 1</text>
+     <text style="fill: #292122; font: 8.6px 'DejaVu Sans'; text-anchor: start" x="246.137" y="592.777094" transform="rotate(-0 246.137 592.777094)">E1: Faster-YOCO − baseline, seed 1</text>
     </g>
     <g id="line2d_129">
      <path d="M 222.057 602.390281
@@ -2779,7 +2779,7 @@ L 239.257 602.390281
 " style="fill: none; stroke-dasharray: 5.92,2.56; stroke-dashoffset: 0; stroke: #8c0000; stroke-width: 1.6"/>
     </g>
     <g id="text_73">
-     <text style="fill: #292122; font: 8.6px 'DejaVu Sans'; text-anchor: start" x="246.137" y="605.400281" transform="rotate(-0 246.137 605.400281)">E2: Faster-YOCO − reference, seed 2</text>
+     <text style="fill: #292122; font: 8.6px 'DejaVu Sans'; text-anchor: start" x="246.137" y="605.400281" transform="rotate(-0 246.137 605.400281)">E2: Faster-YOCO − baseline, seed 2</text>
     </g>
    </g>
   </g>
@@ -3195,7 +3195,7 @@ L 811.366875 601.795969
    </g>
   </g>
   <g id="text_97">
-   <text style="fill: #292122; font: 700 18px 'DejaVu Sans'; text-anchor: start" x="51.84" y="31.104" transform="rotate(-0 51.84 31.104)">Faster-YOCO vs reference: 2 seeds × 20,000 updates</text>
+   <text style="fill: #292122; font: 700 18px 'DejaVu Sans'; text-anchor: start" x="51.84" y="31.104" transform="rotate(-0 51.84 31.104)">Faster-YOCO vs baseline: 2 seeds × 20,000 updates</text>
   </g>
   <g id="text_98">
    <text style="fill: #79696b; font: 10.5px 'DejaVu Sans'; text-anchor: start" x="51.84" y="53.9136" transform="rotate(-0 51.84 53.9136)">YOCO-3B, upstream recipe, eight 80 GB Hopper GPUs · loss in bits per token · held-out: 1.64M fineweb-edu + 0.41M code tokens, mixed 0.8 / 0.2</text>

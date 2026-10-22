@@ -65,7 +65,7 @@ def hero():
              color=MUTED, fontsize=10.5)
     ax = fig.add_axes([.24, .24, .39, .45])
     ax.barh([1, 0], values, color=[LIGHT, RED], height=.24, zorder=3)
-    ax.set_yticks([1, 0], ['Reference', 'Faster-YOCO'])
+    ax.set_yticks([1, 0], ['Baseline', 'Faster-YOCO'])
     for y, value in zip([1, 0], values):
         ax.text(value + 6, y, f'{value:.1f} ms', va='center', color=INK, fontsize=11.5, weight='bold')
     ax.set_xlim(0, 335)
@@ -77,8 +77,8 @@ def hero():
     fig.text(.85, .54, f"{final['speedup']:.2f}×", color=RED, fontsize=35, weight='bold', ha='center')
     fig.text(.85, .43, 'update speedup', color=MUTED, fontsize=12, ha='center')
     fig.text(.85, .36, 'full check: PASS', color=MUTED, fontsize=10, ha='center')
-    fig.text(.06, .075, 'Reference → candidate → reference in independent processes on one host; reference = mean of '
-             'the two reference runs.', color=MUTED, fontsize=9.5)
+    fig.text(.06, .075, 'Baseline → candidate → baseline in independent processes on one host; baseline = mean of '
+             'the two baseline runs.', color=MUTED, fontsize=9.5)
     fig.text(.06, .03, f"Speedup = the smaller of the median-update ratio ({final['speedup_by_median']:.4f}×) and the "
              f"total-time ratio ({final['speedup_by_total']:.4f}×).", color=MUTED, fontsize=9.5)
     save(fig, ROOT / '01-benchmark')
@@ -164,7 +164,7 @@ def time_budget():
               loc='lower right', frameon=False, fontsize=9.5, labelcolor=INK)
     gemm, gather = parts[0]['bound_ms'], parts[4]['bound_ms']
     fig.text(.06, .17, f"Sum of the lower bounds: {lo:.1f}–{hi:.1f} ms per update vs {steps['target_3x']:.1f} ms for 3× "
-             f"(measured {steps['faster_yoco']:.1f} ms; reference {steps['reference']:.1f} ms).",
+             f"(measured {steps['faster_yoco']:.1f} ms; baseline {steps['reference']:.1f} ms).",
              fontsize=10, color=INK)
     fig.text(.06, .035, f"The GEMM bound ({gemm[0]:.1f} ms at the measured 750 TFLOP/s BF16 peak) and the bf16 parameter "
              f"all-gather\n({gather[0]:.1f} ms at the NVLink bound, needed before the next update reads the parameters) alone "
@@ -209,11 +209,11 @@ def validation():
     held = {a: np.array([arms[a]['heldout_bits'][str(k)]['mix'] for k in ck]) for a in arms}
     style = {'ref': dict(color=GREY, linestyle='-', linewidth=2.6), 'ref_s2': dict(color=GREY, linestyle='--', linewidth=2.6),
              'opt': dict(color=RED, linestyle='-', linewidth=1.1), 'opt_s2': dict(color=RED, linestyle='--', linewidth=1.1)}
-    label = {'ref': 'Reference, seed 1', 'ref_s2': 'Reference, seed 2', 'opt': 'Faster-YOCO, seed 1',
+    label = {'ref': 'Baseline, seed 1', 'ref_s2': 'Baseline, seed 2', 'opt': 'Faster-YOCO, seed 1',
              'opt_s2': 'Faster-YOCO, seed 2'}
     order = ['ref', 'ref_s2', 'opt', 'opt_s2']
     fig = plt.figure(figsize=(12, 9.6), facecolor='white')
-    fig.text(.06, .955, 'Faster-YOCO vs reference: 2 seeds × 20,000 updates', color=INK, weight='bold',
+    fig.text(.06, .955, 'Faster-YOCO vs baseline: 2 seeds × 20,000 updates', color=INK, weight='bold',
              fontsize=18)
     fig.text(.06, .922, 'YOCO-3B, upstream recipe, eight 80 GB Hopper GPUs · loss in bits per token · held-out: 1.64M '
              'fineweb-edu + 0.41M code tokens, mixed 0.8 / 0.2', color=MUTED, fontsize=10.5)
@@ -266,9 +266,9 @@ def validation():
     ax.fill_between(xs, -np.abs(y_tr), np.abs(y_tr), color=GRID, alpha=.6, linewidth=0, zorder=1,
                     label='±|Y|: criterion region')
     ax.axhline(0, color=MUTED, linewidth=.8, zorder=2)
-    ax.plot(xs, y_tr, color=GREY, linewidth=1.8, zorder=3, label='Y: reference seed 2 − seed 1')
-    ax.plot(xs, e1_tr, color=RED, linewidth=1.6, zorder=4, label='E1: Faster-YOCO − reference, seed 1')
-    ax.plot(xs, e2_tr, color=RED, linewidth=1.6, linestyle='--', zorder=4, label='E2: Faster-YOCO − reference, seed 2')
+    ax.plot(xs, y_tr, color=GREY, linewidth=1.8, zorder=3, label='Y: baseline seed 2 − seed 1')
+    ax.plot(xs, e1_tr, color=RED, linewidth=1.6, zorder=4, label='E1: Faster-YOCO − baseline, seed 1')
+    ax.plot(xs, e2_tr, color=RED, linewidth=1.6, linestyle='--', zorder=4, label='E2: Faster-YOCO − baseline, seed 2')
     ax.set_xlim(0, 20000)
     ax.set_ylim(-.44, .27)
     panel(ax, 'Training-loss difference (1,000-update rolling mean)')

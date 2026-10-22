@@ -8,12 +8,12 @@
 
 | Implementation | Time / update (ms) ↓ | Median update (ms) ↓ | Speedup ↑ |
 |---|---:|---:|---:|
-| Reference | 251.9 | 249.7 | 1.00× |
+| Baseline | 251.9 | 249.7 | 1.00× |
 | **Faster-YOCO** | **117.9** | **117.5** | **2.12×** |
 
-Measured with a full check on **8 Hopper GPUs (80 GB)**: the upstream `scripts/train.sh` recipe for YOCO-3B (`yoco_3b`, 3.45B parameters), one 2,048-token sequence per GPU (16,384 tokens per update), BF16 with FP32 master weights and FP32 Adam state, ZeRO stage-1 optimizer sharding (`--zero-sharding os`), **no FP8**. The timer runs the repository's real `train.py`; reference, candidate and reference run in independent processes on the same host with cold compile caches, and the candidate then passed the check's numerical gates. The speedup is the smaller of the median-update ratio and the total-time ratio (2.1369×): **2.1247×**. The goal was 3×; it was not reached.
+Measured with a full check on **8 Hopper GPUs (80 GB)**: the upstream `scripts/train.sh` recipe for YOCO-3B (`yoco_3b`, 3.45B parameters), one 2,048-token sequence per GPU (16,384 tokens per update), BF16 with FP32 master weights and FP32 Adam state, ZeRO stage-1 optimizer sharding (`--zero-sharding os`), **no FP8**. The timer runs the repository's real `train.py`, and the candidate passed the check's numerical gates. The speedup is the smaller of the median-update ratio and the total-time ratio (2.1369×): **2.1247×**.
 
-In a 20,000-update training run on the same host, Faster-YOCO took **2,799 s** against **5,345 s** for the reference: **1.91×** end to end, including start-up and model saves (0.1180 vs 0.2497 s per update). It uses more memory: 55.4 vs 48.3 GiB peak allocated per GPU in that run (**+7.1 GiB**).
+In a 20,000-update training run on the same host, Faster-YOCO took **2,799 s** against **5,345 s** for the baseline: **1.91×** end to end, including start-up and model saves (0.1180 vs 0.2497 s per update). It uses more memory: 55.4 vs 48.3 GiB peak allocated per GPU in that run (**+7.1 GiB**).
 
 ## Quick Start
 
@@ -46,9 +46,9 @@ See the [switch table](docs/training.md#switches) and the [measured configuratio
 
 ## Validation
 
-**Numerical check.** The final configuration passed the [frozen judge](docs/judge.md): structure and exact items (recipe, data, RNG fingerprints, call counts, learning rate, Adam hyper-parameters, dtypes) with no failure; 5,123 of 38,464 recorded tensors were bitwise identical rather than all, so the statistical gate decided. It trains 200 updates from scratch with three paired seeds; the tolerance δ is twice the reference's own seed-to-seed standard deviation, frozen from six reference seeds.
+**Numerical check.** The final configuration passed the [frozen judge](docs/judge.md): structure and exact items (recipe, data, RNG fingerprints, call counts, learning rate, Adam hyper-parameters, dtypes) with no failure; 5,123 of 38,464 recorded tensors were bitwise identical rather than all, so the statistical gate decided. It trains 200 updates from scratch with three paired seeds; the tolerance δ is twice the baseline's own seed-to-seed standard deviation, frozen from six baseline seeds.
 
-| Loss window (updates) | Mean difference (nats) | Difference / reference σ | Within δ = 2σ |
+| Loss window (updates) | Mean difference (nats) | Difference / baseline σ | Within δ = 2σ |
 |---|---:|---:|:---:|
 | 5–15 | +0.00003 | +0.03 | ✓ |
 | 15–25 | −0.00000 | −0.00 | ✓ |
@@ -57,11 +57,11 @@ See the [switch table](docs/training.md#switches) and the [measured configuratio
 | 50–100 | −0.00095 | −0.22 | ✓ |
 | 100–200 | −0.00713 | −0.75 | ✓ |
 
-**Long training.** Faster-YOCO and the reference were each trained for 20,000 updates (328M tokens) with two seeds, using the same recipe; checkpoints every 2,000 updates were scored on a held-out set (1.64M fineweb-edu and 0.41M code tokens from files not used for training, exact duplicates of training documents removed) with the reference model code. No run had a non-finite loss or gradient norm.
+**Long training.** Faster-YOCO and the baseline were each trained for 20,000 updates (328M tokens) with two seeds, using the same recipe; checkpoints every 2,000 updates were scored on a held-out set (1.64M fineweb-edu and 0.41M code tokens from files not used for training, exact duplicates of training documents removed) with the baseline model code. No run had a non-finite loss or gradient norm.
 
 ![Training and held-out loss of the four runs, and their differences](docs/performance-views/04-validation.svg)
 
-The yardstick is the reference's own seed-to-seed difference, Y = ref<sub>s2</sub> − ref<sub>s1</sub>. A checkpoint counts as consistent if |E1|, |E2| and |S| are all at most |Y|, where E1 = opt<sub>s1</sub> − ref<sub>s1</sub>, E2 = opt<sub>s2</sub> − ref<sub>s2</sub> and S = opt<sub>s2</sub> − opt<sub>s1</sub>.
+The yardstick is the baseline's own seed-to-seed difference, Y = ref<sub>s2</sub> − ref<sub>s1</sub>. A checkpoint counts as consistent if |E1|, |E2| and |S| are all at most |Y|, where E1 = opt<sub>s1</sub> − ref<sub>s1</sub>, E2 = opt<sub>s2</sub> − ref<sub>s2</sub> and S = opt<sub>s2</sub> − opt<sub>s1</sub>.
 
 | Update | Y | E1 | E2 | S | Consistent |
 |---:|---:|---:|---:|---:|:---:|
@@ -85,7 +85,7 @@ Held-out loss of the 0.8 fineweb-edu / 0.2 code mix, bits per token.
 | Held-out code (0.41M tokens) | 5 / 10 | ✓ |
 | Training loss (1,000-update mean) | 7 / 10 | ✓ |
 
-Of the eight misses, seven are in S alone; the eighth (code at 14,000) is in S and E1 (0.0179 vs |Y| = 0.0160). S − Y equals E2 − E1 by definition, and since both implementations see the same data order for a given seed, S follows Y closely: S exceeds |Y| whenever E2 − E1 has the sign of Y. Same-seed training curves correlate above 0.9999; their per-100-update differences average 0.004 (seed 1) and 0.007 (seed 2) bits in absolute value, against 0.13 bits between the reference's two seeds.
+Of the eight misses, seven are in S alone; the eighth (code at 14,000) is in S and E1 (0.0179 vs |Y| = 0.0160). S − Y equals E2 − E1 by definition, and since both implementations see the same data order for a given seed, S follows Y closely: S exceeds |Y| whenever E2 − E1 has the sign of Y. Same-seed training curves correlate above 0.9999; their per-100-update differences average 0.004 (seed 1) and 0.007 (seed 2) bits in absolute value, against 0.13 bits between the baseline's two seeds.
 
 **Caveat.** Faster-YOCO's held-out loss is slightly but consistently higher: E1 averages +0.0024 bits (8 of 10 checkpoints positive), E2 +0.0082 bits (10 of 10). That is at most 0.2% of the loss and smaller than the seed-to-seed difference at every checkpoint (by a factor of 2.6 or more; 2.6 is E2 at the final checkpoint), so it passes the criterion, but two seeds cannot tell whether a systematic offset of this size exists. Faster-YOCO's seed-2 run ran on a second host of the same model, so E2 also contains any difference between the hosts. No downstream evaluation was run.
 

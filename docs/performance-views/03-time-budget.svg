@@ -333,7 +333,7 @@ z
    <text style="fill: #79696b; font: 10.2px 'DejaVu Sans'; text-anchor: start" x="38.88" y="58.9248" transform="rotate(-0 38.88 58.9248)">Final configuration · profiled time per update and GPU (rank 0) vs estimated lower bound of each component</text>
   </g>
   <g id="text_29">
-   <text style="fill: #292122; font: 10px 'DejaVu Sans'; text-anchor: start" x="38.88" y="370.512" transform="rotate(-0 38.88 370.512)">Sum of the lower bounds: 80.0–91.4 ms per update vs 84.0 ms for 3× (measured 117.9 ms; reference 251.9 ms).</text>
+   <text style="fill: #292122; font: 10px 'DejaVu Sans'; text-anchor: start" x="38.88" y="370.512" transform="rotate(-0 38.88 370.512)">Sum of the lower bounds: 80.0–91.4 ms per update vs 84.0 ms for 3× (measured 117.9 ms; baseline 251.9 ms).</text>
   </g>
   <g id="text_30">
    <text style="fill: #79696b; font: 9.3px 'DejaVu Sans'" transform="translate(38.88 407.12145)">The GEMM bound (53.6 ms at the measured 750 TFLOP/s BF16 peak) and the bf16 parameter all-gather</text>
