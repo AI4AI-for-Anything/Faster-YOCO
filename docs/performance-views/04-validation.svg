@@ -3198,7 +3198,7 @@ L 811.366875 601.795969
    <text style="fill: #292122; font: 700 18px 'DejaVu Sans'; text-anchor: start" x="51.84" y="31.104" transform="rotate(-0 51.84 31.104)">Faster-YOCO vs baseline: 2 seeds × 20,000 updates</text>
   </g>
   <g id="text_98">
-   <text style="fill: #79696b; font: 10.5px 'DejaVu Sans'; text-anchor: start" x="51.84" y="53.9136" transform="rotate(-0 51.84 53.9136)">YOCO-3B, upstream recipe, eight 80 GB Hopper GPUs · loss in bits per token · held-out: 1.64M fineweb-edu + 0.41M code tokens, mixed 0.8 / 0.2</text>
+   <text style="fill: #79696b; font: 10.5px 'DejaVu Sans'; text-anchor: start" x="51.84" y="53.9136" transform="rotate(-0 51.84 53.9136)">YOCO-3B, upstream recipe, eight H100 GPUs (80 GB) · loss in bits per token · held-out: 1.64M fineweb-edu + 0.41M code tokens, mixed 0.8 / 0.2</text>
   </g>
   <g id="text_99">
    <text style="fill: #79696b; font: 9.3px 'DejaVu Sans'" transform="translate(51.84 673.584469)">Consistent at a checkpoint if |E1|, |E2| and |S| ≤ |Y| (S = Faster-YOCO seed 2 − seed 1, not drawn). Checkpoints consistent: held-out mix 10/10, fineweb 10/10, code 5/10,</text>

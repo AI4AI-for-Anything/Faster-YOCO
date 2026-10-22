@@ -1,5 +1,5 @@
 {
- "hardware": "8 Hopper GPUs (sm_90, 80 GB) in one host; all full checks ran on the same host",
+ "hardware": "8 NVIDIA H100 GPUs (sm_90, 80 GB) in one host; all full checks ran on the same host",
  "workload": "YOCO-3B (yoco_3b, 3.45B parameters), upstream scripts/train.sh recipe with the recorded deviations: 8 data-parallel ranks, one 2,048-token sequence per GPU (16,384 tokens per update), bf16 with fp32 master weights and fp32 Adam state, ZeRO stage 1 (--zero-sharding os); no FP8",
  "scope": "Every row is a full check by the same frozen judge: reference -> candidate -> reference in independent processes with cold compile caches (50 warm-up updates, then three 100-update windows per run), followed by the numerical gates. No row was bitwise identical; every row passed the statistical gate (equivalent, 3 seeds). speedup = min(total-time ratio, median-update ratio), each against the mean of the two reference runs. Rows are cumulative configurations, not isolated ablations. Commits are the commits of this repository; R18 and R19 use the same switch set with different code.",
  "rows": [
@@ -292,7 +292,7 @@
    "numpy": "1.23.0",
    "tiktoken": "0.14.0"
   },
-  "gpu": "8 Hopper GPUs (80 GB), driver 570.133.20",
+  "gpu": "8 NVIDIA H100 GPUs (80 GB), driver 570.133.20",
   "cost_gpu_hours": 2.527
  },
  "rounds_logged": 28,

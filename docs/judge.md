@@ -87,7 +87,7 @@ and the whole acceptance was rerun under the repaired judge, with the results ab
 
 ## Host portability
 
-The judge was first formulated and frozen on one host. On a second host of the same model, with hardware,
+The judge was first formulated and frozen on one H100 host. On a second host of the same model, with hardware,
 VBIOS, driver and every library binary identical by sha256, the unmodified reference did not reproduce the frozen
 records: 5,157 of 38,464 tensors were bitwise identical, the forward losses of the first two updates matched and
 the gradients after the all-reduce did not. The same judge code was therefore re-recorded on the second host with

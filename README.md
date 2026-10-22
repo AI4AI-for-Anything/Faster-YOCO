@@ -2,16 +2,16 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-**2.12× faster YOCO-3B pretraining updates on 8 Hopper GPUs, optimized by AI agents.**
+**2.12× faster YOCO-3B pretraining updates on 8 NVIDIA H100 GPUs, optimized by AI agents.**
 
-![Faster-YOCO: 2.12× update speedup on eight 80 GB Hopper GPUs](docs/performance-views/01-benchmark.svg)
+![Faster-YOCO: 2.12× update speedup on eight NVIDIA H100 GPUs (80 GB)](docs/performance-views/01-benchmark.svg)
 
 | Implementation | Time / update (ms) ↓ | Median update (ms) ↓ | Speedup ↑ |
 |---|---:|---:|---:|
 | Baseline | 251.9 | 249.7 | 1.00× |
 | **Faster-YOCO** | **117.9** | **117.5** | **2.12×** |
 
-Measured with a full check on **8 Hopper GPUs (80 GB)**: the upstream `scripts/train.sh` recipe for YOCO-3B (`yoco_3b`, 3.45B parameters), one 2,048-token sequence per GPU (16,384 tokens per update), BF16 with FP32 master weights and FP32 Adam state, ZeRO stage-1 optimizer sharding (`--zero-sharding os`), **no FP8**. The timer runs the repository's real `train.py`, and the candidate passed the check's numerical gates. The speedup is the smaller of the median-update ratio and the total-time ratio (2.1369×): **2.1247×**.
+Measured with a full check on **8 NVIDIA H100 GPUs (80 GB)**: the upstream `scripts/train.sh` recipe for YOCO-3B (`yoco_3b`, 3.45B parameters), one 2,048-token sequence per GPU (16,384 tokens per update), BF16 with FP32 master weights and FP32 Adam state, ZeRO stage-1 optimizer sharding (`--zero-sharding os`), **no FP8**. The timer runs the repository's real `train.py`, and the candidate passed the check's numerical gates. The speedup is the smaller of the median-update ratio and the total-time ratio (2.1369×): **2.1247×**.
 
 In a 20,000-update training run on the same host, Faster-YOCO took **2,799 s** against **5,345 s** for the baseline: **1.91×** end to end, including start-up and model saves (0.1180 vs 0.2497 s per update). It uses more memory: 55.4 vs 48.3 GiB peak allocated per GPU in that run (**+7.1 GiB**).
 
@@ -29,7 +29,7 @@ Equivalently, `source scripts/configs/faster.env` and run the upstream `torchrun
 
 ## Agent Optimization History
 
-Each point is a full check on the same host, 8 Hopper GPUs, 2,048 tokens per GPU.
+Each point is a full check on the same host, 8 NVIDIA H100 GPUs, 2,048 tokens per GPU.
 
 ![YOCO optimization history, from 1.39× to 2.12×](docs/performance-views/02-history.svg)
 

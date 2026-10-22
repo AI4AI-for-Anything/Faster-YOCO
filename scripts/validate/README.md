@@ -4,7 +4,7 @@ These scripts rerun the comparison in the [README](../../README.md#validation): 
 upstream code, two seeds each, 20,000 updates of the measured recipe, held-out loss every 2,000 updates. They are the
 scripts of the recorded run with machine-specific paths replaced by arguments and environment variables; they have
 not been rerun in this form. Each arm needs 8 GPUs (about 47 minutes for Faster-YOCO and 89 minutes for the reference
-on 8 Hopper GPUs, plus about 13 minutes of evaluation) and about 7 GB per saved checkpoint.
+on 8 NVIDIA H100 GPUs, plus about 13 minutes of evaluation) and about 7 GB per saved checkpoint.
 
 | File | Role |
 |---|---|
