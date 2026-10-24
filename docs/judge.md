@@ -1,12 +1,12 @@
 # The judge
 
 Every speedup in this repository comes from a full check by a frozen judge built with the ResearchBoost-Agent method
-before any optimization was judged. The judge itself (benchmark, numerical adapter, frozen reference records and
+before any optimization was judged. The judge itself (benchmark, numerical adapter, frozen baseline records and
 trajectories) is a separate artifact and is not included; this page describes what it checks and how it was accepted.
 
 ## What is compared
 
-- **Reference:** the unmodified upstream tree (branch `upstream`, the `YOCO/` directory of microsoft/unilm at
+- **Baseline:** the unmodified upstream tree (branch `upstream`, the `YOCO/` directory of microsoft/unilm at
   `f4f7b27`) with no switch file.
 - **Candidate:** a tree plus a switch file (`{"environment": {...}}`, see [`optimizations/`](../optimizations)).
   Switch files may not set variables the judge manages (temporary and compile-cache directories, visible devices,
@@ -25,16 +25,16 @@ trajectories) is a separate artifact and is not included; this page describes wh
 The gates run in order and stop at the first failure.
 
 0. **Structure.** The entry file and the parts of fairseq's `cli_main`, `main` and `train` outside the per-update
-   loop body must have the same syntax tree as the reference, read from the live functions after the tree's modules
+   loop body must have the same syntax tree as the baseline, read from the live functions after the tree's modules
    are imported (a vendored or patched copy of fairseq's entry is caught too); otherwise ERROR. The tree's data loader,
    called as the trainer calls it, must yield the frozen first three batches on each of the eight shards; otherwise
    INCORRECT.
-1. **Benefit.** Reference → candidate → reference through the real entry point, each in a fresh `torchrun` process
+1. **Benefit.** Baseline → candidate → baseline through the real entry point, each in a fresh `torchrun` process
    with cold Triton/Inductor/CUDA caches, on the host and in the session of the check. Each run: 50 warm-up updates,
    then three windows of 100 updates (an update is one step of the shard-local Adam inside fairscale's OSS, timed on
-   the host). Speedup = min(mean reference total / candidate total, mean reference median update / candidate
-   median update). The candidate must exceed max(1.02, 1 + 2 × the relative gap between the two reference runs);
-   otherwise UNAVAILABLE (no benefit). A check is INVALID and rerun if the two reference medians differ by more than
+   the host). Speedup = min(mean baseline total / candidate total, mean baseline median update / candidate
+   median update). The candidate must exceed max(1.02, 1 + 2 × the relative gap between the two baseline runs);
+   otherwise UNAVAILABLE (no benefit). A check is INVALID and rerun if the two baseline medians differ by more than
    3%, if any run's windows differ by more than 30%, or if a log shows a recompile limit, skipped CUDA graphs or a
    skipped update (gradient overflow). Timing is never compared with a stored number.
 2. **Bitwise.** In deterministic mode, one 8-rank process runs the tree's own loop body for updates 0 and 1 (learning
@@ -50,7 +50,7 @@ The gates run in order and stop at the first failure.
    per seed. A seed multiplies each initial FP32 weight by (1 + 2⁻⁶ z), z ~ N(0, 1) from a private generator; data
    order, initialization and every other random draw stay those of `--seed 1`. Endpoints are the mean loss per token
    (nats, averaged over the eight ranks) over updates [5, 15), [15, 25), [25, 35), [35, 50), [50, 100) and
-   [100, 200). The tolerance is δ = 2σ per endpoint, σ being the reference's own seed-to-seed standard deviation over
+   [100, 200). The tolerance is δ = 2σ per endpoint, σ being the baseline's own seed-to-seed standard deviation over
    six seeds, frozen before any candidate was seen. With three seeds: PASS if every endpoint's mean paired difference
    is within δ, INCORRECT if any exceeds δ with paired-t p < 0.05, otherwise extend to six seeds.
 
@@ -62,7 +62,7 @@ the recorded updates 60–61 and the trajectory windows after update 50 cover th
 | δ (nats) | 0.002084 | 0.001280 | 0.000838 | 0.000923 | 0.008496 | 0.019017 |
 
 Known limit: by updates 100–200 paired runs have decorrelated, so a legitimate candidate has a small chance of a false
-INCORRECT in that window. It was kept because the reference's own non-deterministic runs pass.
+INCORRECT in that window. It was kept because the baseline's own non-deterministic runs pass.
 
 ## Acceptance
 
@@ -88,15 +88,15 @@ and the whole acceptance was rerun under the repaired judge, with the results ab
 ## Host portability
 
 The judge was first formulated and frozen on one H100 host. On a second host of the same model, with hardware,
-VBIOS, driver and every library binary identical by sha256, the unmodified reference did not reproduce the frozen
+VBIOS, driver and every library binary identical by sha256, the unmodified baseline did not reproduce the frozen
 records: 5,157 of 38,464 tensors were bitwise identical, the forward losses of the first two updates matched and
 the gradients after the all-reduce did not. The same judge code was therefore re-recorded on the second host with
-the same procedure (records, thresholds, six reference seeds, δ, acceptance) and frozen again. All full checks in
+the same procedure (records, thresholds, six baseline seeds, δ, acceptance) and frozen again. All full checks in
 this repository ran on that second host against its own records. The cause was not isolated; the large BF16
 gradient all-reduces used NCCL's NVLS algorithm (reduction inside the NVSwitch) on both hosts, and a chassis-level
 difference there is a plausible but unverified explanation.
 
-Bitwise records are therefore specific to a host. On a new host, first check that the unmodified reference
+Bitwise records are therefore specific to a host. On a new host, first check that the unmodified baseline
 reproduces its own records bit for bit before comparing anything with them.
 
 ## Final result
@@ -106,7 +106,7 @@ Commit `026c4ea` with [`scripts/configs/faster.env`](../scripts/configs/faster.e
 | Gate | Result |
 |---|---|
 | 0, structure | pass; loader digests equal; 132 / 132 inputs unchanged at start and end |
-| 1, benefit | reference 0.2522 / 0.2516 s per update (medians 0.2498 / 0.2495 s), candidate 0.1179 s (median 0.1175 s); 2.1369× by total, **2.1247×** by median; reference gap 0.22%, bar 1.02 |
+| 1, benefit | baseline 0.2522 / 0.2516 s per update (medians 0.2498 / 0.2495 s), candidate 0.1179 s (median 0.1175 s); 2.1369× by total, **2.1247×** by median; baseline gap 0.22%, bar 1.02 |
 | 2, bitwise | 5,123 / 38,464 tensors bitwise; 0 exact-item failures (tier N1) |
 | 3, statistical | 3 seeds, all six endpoints within δ: equivalent |
 | Verdict | **PASS** |

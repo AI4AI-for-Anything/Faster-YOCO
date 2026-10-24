@@ -135,7 +135,7 @@ the exact code that was checked at that round; that is the commit listed in the 
 
 ## Memory, throughput and start-up
 
-| | Reference | Faster-YOCO |
+| | Baseline | Faster-YOCO |
 |---|---:|---:|
 | Peak allocated memory per GPU, final full check | 52.1 GiB | 56.4 GiB |
 | Peak reserved memory per GPU, final full check | 53.7 GiB | 63.0 GiB |
@@ -152,15 +152,15 @@ ratio is 1.91×.
 
 ## Benchmark protocol
 
-Gate 1 of the [judge](judge.md) gives the speedup: reference → candidate → reference in fresh `torchrun` processes on
+Gate 1 of the [judge](judge.md) gives the speedup: baseline → candidate → baseline in fresh `torchrun` processes on
 one host and in one session, cold compile caches, the real `train.py` entry, 50 warm-up updates and then three
 100-update windows per run (below update 1,000, where the data loader stalls to fill its next shuffle block). A step
 includes fetching the batch, forward, loss, backward, gradient reduction, clipping, the optimizer step, the parameter
 exchange, the learning-rate update and logging bookkeeping; process start, model construction, compilation and
-warm-up are excluded. Speedup = min(total-time ratio, median-update ratio) against the mean of the two reference
-runs; it must exceed max(1.02, 1 + 2 × the gap between the reference runs).
+warm-up are excluded. Speedup = min(total-time ratio, median-update ratio) against the mean of the two baseline
+runs; it must exceed max(1.02, 1 + 2 × the gap between the baseline runs).
 
-Single-run `time` screens (the same windows, without the paired reference) were used to choose candidates. Every
+Single-run `time` screens (the same windows, without the paired baseline) were used to choose candidates. Every
 speedup in the README and the history figure comes from a full check; the time budget comes from a profile and the
 bounds are estimates.
 
@@ -195,7 +195,7 @@ were trained for 20,000 updates (328M tokens, less than one pass over either tra
   `000_00000`) and the first 800 of codeparrot-clean `file-000000000002.json.gz` (training used file 1), same dataset
   revisions; 4 fineweb documents whose exact text occurs in the training shards were dropped. Packed exactly like the
   training loader into 800 fineweb samples (1,638,400 target tokens) and 200 code samples (409,600).
-- **Evaluation:** identical for every arm: the reference tree's model code in BF16 and eval mode, FP32
+- **Evaluation:** identical for every arm: the baseline tree's model code in BF16 and eval mode, FP32
   log-softmax cross-entropy of every next token as fairseq's criterion computes it, in bits; mix = 0.8 fineweb + 0.2
   code. Training loss is fairseq's logged loss (bits per token).
 - **Criterion** (defined before the seed-2 arms finished, not changed afterwards): Y = ref_s2 − ref, E1 = opt − ref,
@@ -230,12 +230,12 @@ Bits per token; bold = exceeds |Y|. All data are in
 Reading the misses: S − Y = E2 − E1 by definition. Within a seed both implementations see the same data, so S tracks
 Y, and |S| > |Y| whenever E2 − E1 has the same sign as Y. All eight misses are in S; at code 14,000, E1 also exceeds
 |Y| (0.0179 against 0.0160). The code set has 0.41M tokens and is the noisiest metric. Same-seed training curves correlate above 0.9999 over the 200 per-100-update means; their absolute
-differences average 0.0042 bits (seed 1) and 0.0073 bits (seed 2), against 0.13 bits between the reference's two
+differences average 0.0042 bits (seed 1) and 0.0073 bits (seed 2), against 0.13 bits between the baseline's two
 seeds.
 
 **Limits of this evidence.**
 
-- Faster-YOCO's held-out loss is slightly but consistently higher than the reference's: on the mix, E1 averages
+- Faster-YOCO's held-out loss is slightly but consistently higher than the baseline's: on the mix, E1 averages
   +0.0024 bits (8 of 10 checkpoints positive, +0.0047 at the end) and E2 +0.0082 bits (10 of 10, +0.0100 at the end).
   This is at most 0.2% of the loss and smaller than |Y| at every checkpoint (by a factor of 2.6 or more), but two
   seeds cannot tell whether a systematic offset of this size exists.
@@ -250,7 +250,7 @@ The scripts are in [`scripts/validate/`](../scripts/validate).
 All rows are full checks of cumulative configurations by the same judge on the same host (data in
 [`performance-views/history.json`](performance-views/history.json)). Times are mean seconds per update.
 
-| Round | Commit | Change | Reference (s) | Faster-YOCO (s) | Speedup |
+| Round | Commit | Change | Baseline (s) | Faster-YOCO (s) | Speedup |
 |---|---|---|---:|---:|---:|
 | R03 | `da94f9b` | Sharded ZeRO-1 work, layer CUDA graphs, one in-place all-gather (R01–R03) | 0.2508 | 0.1802 | 1.3865× |
 | R04 | `00c33a0` | Compiled RMSNorm + DDP bucket views | 0.2511 | 0.1577 | 1.5834× |
@@ -299,7 +299,7 @@ R02 and R03 were screened on the second host before its judge was frozen; R01 on
 
 ## Why it stopped here
 
-The run targeted 3×: at most 84.0 ms per update against the 251.9 ms reference of the final check. It reached
+The run targeted 3×: at most 84.0 ms per update against the 251.9 ms baseline of the final check. It reached
 2.1247× (117.9 ms). The owner stopped it after round 28 and asked for the training validation instead.
 
 ![Time budget of the final configuration](performance-views/03-time-budget.svg)
